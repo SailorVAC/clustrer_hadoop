@@ -1,0 +1,14 @@
+# Локальные настройки кластера
+.env
+
+# Docker-логи/данные, если кто-то решит сделать bind-mount
+data/
+logs/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+*.swp

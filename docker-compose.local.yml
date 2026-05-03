@@ -1,0 +1,149 @@
+# Single-host compose: все 5 сервисов + 2 воркера на одной машине.
+# Полезен для smoke-теста, что Dockerfile/конфиги вообще валидны,
+# до развёртывания на 3 ноутбука.
+#
+# Запуск:   docker compose -f docker-compose.local.yml up -d --build
+# Проверка: открыть http://localhost:9870 и http://localhost:8088
+
+x-image: &image clustrer-hadoop:${HADOOP_VERSION:-3.3.6}
+
+services:
+  namenode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
+    image: *image
+    container_name: local-namenode
+    hostname: master
+    environment:
+      HADOOP_ROLE: namenode
+      MASTER_HOST: master
+    ports:
+      - "9000:9000"
+      - "9870:9870"
+    volumes:
+      - local_namenode_data:/data/hdfs/namenode
+    networks:
+      hadoop_net:
+        aliases: [master]
+    restart: unless-stopped
+
+  secondarynamenode:
+    image: *image
+    container_name: local-secondarynamenode
+    hostname: master
+    depends_on: [namenode]
+    environment:
+      HADOOP_ROLE: secondarynamenode
+      MASTER_HOST: master
+    ports:
+      - "9868:9868"
+    volumes:
+      - local_secondary_data:/data/hdfs/secondary
+    networks:
+      hadoop_net:
+    restart: unless-stopped
+
+  resourcemanager:
+    image: *image
+    container_name: local-resourcemanager
+    hostname: master
+    depends_on: [namenode]
+    environment:
+      HADOOP_ROLE: resourcemanager
+      MASTER_HOST: master
+    ports:
+      - "8088:8088"
+      - "8030:8030"
+      - "8031:8031"
+      - "8032:8032"
+      - "8033:8033"
+    networks:
+      hadoop_net:
+        aliases: [master]
+    restart: unless-stopped
+
+  historyserver:
+    image: *image
+    container_name: local-historyserver
+    hostname: master
+    depends_on: [resourcemanager]
+    environment:
+      HADOOP_ROLE: historyserver
+      MASTER_HOST: master
+    ports:
+      - "10020:10020"
+      - "19888:19888"
+    networks:
+      hadoop_net:
+    restart: unless-stopped
+
+  worker1-datanode:
+    image: *image
+    container_name: local-worker1-datanode
+    hostname: worker1
+    depends_on: [namenode]
+    environment:
+      HADOOP_ROLE: datanode
+      MASTER_HOST: master
+      NODE_NAME: worker1
+    volumes:
+      - local_worker1_data:/data/hdfs/datanode
+    networks:
+      hadoop_net:
+        aliases: [worker1]
+    restart: unless-stopped
+
+  worker1-nodemanager:
+    image: *image
+    container_name: local-worker1-nodemanager
+    hostname: worker1
+    depends_on: [resourcemanager, worker1-datanode]
+    environment:
+      HADOOP_ROLE: nodemanager
+      MASTER_HOST: master
+      NODE_NAME: worker1
+    networks:
+      hadoop_net:
+    restart: unless-stopped
+
+  worker2-datanode:
+    image: *image
+    container_name: local-worker2-datanode
+    hostname: worker2
+    depends_on: [namenode]
+    environment:
+      HADOOP_ROLE: datanode
+      MASTER_HOST: master
+      NODE_NAME: worker2
+    volumes:
+      - local_worker2_data:/data/hdfs/datanode
+    networks:
+      hadoop_net:
+        aliases: [worker2]
+    restart: unless-stopped
+
+  worker2-nodemanager:
+    image: *image
+    container_name: local-worker2-nodemanager
+    hostname: worker2
+    depends_on: [resourcemanager, worker2-datanode]
+    environment:
+      HADOOP_ROLE: nodemanager
+      MASTER_HOST: master
+      NODE_NAME: worker2
+    networks:
+      hadoop_net:
+    restart: unless-stopped
+
+volumes:
+  local_namenode_data:
+  local_secondary_data:
+  local_worker1_data:
+  local_worker2_data:
+
+networks:
+  hadoop_net:
+    driver: bridge

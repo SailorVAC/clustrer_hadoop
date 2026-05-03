@@ -1,0 +1,66 @@
+# Compose-файл для ВОРКЕР-ноутбука.
+#
+# Поднимает: DataNode + NodeManager.
+#
+# На каждом воркере в .env должен быть выставлен NODE_NAME=worker1 либо
+# NODE_NAME=worker2 (имя должно совпадать со значением в config/workers
+# и в /etc/hosts мастера).
+#
+# Запуск:
+#   docker compose -f docker-compose.worker.yml up -d --build
+
+x-extra-hosts: &extra_hosts
+  - "master:${MASTER_IP:?MASTER_IP должен быть задан в .env}"
+  - "worker1:${WORKER1_IP:?WORKER1_IP должен быть задан в .env}"
+  - "worker2:${WORKER2_IP:?WORKER2_IP должен быть задан в .env}"
+
+x-image: &image clustrer-hadoop:${HADOOP_VERSION:-3.3.6}
+
+services:
+  datanode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
+    image: *image
+    container_name: datanode
+    hostname: ${NODE_NAME:?NODE_NAME (worker1|worker2) должен быть задан в .env}
+    environment:
+      HADOOP_ROLE: datanode
+      MASTER_HOST: master
+      NODE_NAME: ${NODE_NAME}
+    ports:
+      - "9864:9864"   # DataNode Web UI
+      - "9866:9866"   # DataNode data transfer
+      - "9867:9867"   # DataNode IPC
+    volumes:
+      - datanode_data:/data/hdfs/datanode
+      - hadoop_logs:/opt/hadoop/logs
+    extra_hosts: *extra_hosts
+    restart: unless-stopped
+
+  nodemanager:
+    image: *image
+    container_name: nodemanager
+    hostname: ${NODE_NAME}
+    depends_on:
+      - datanode
+    environment:
+      HADOOP_ROLE: nodemanager
+      MASTER_HOST: master
+      NODE_NAME: ${NODE_NAME}
+    ports:
+      - "8040:8040"   # NodeManager localizer
+      - "8041:8041"   # NodeManager RPC
+      - "8042:8042"   # NodeManager Web UI
+      - "13562:13562" # MapReduce shuffle
+      - "32000-32100:32000-32100"  # YARN AM port range
+    volumes:
+      - hadoop_logs:/opt/hadoop/logs
+    extra_hosts: *extra_hosts
+    restart: unless-stopped
+
+volumes:
+  datanode_data:
+  hadoop_logs:

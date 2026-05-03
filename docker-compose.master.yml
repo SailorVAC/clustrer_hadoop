@@ -1,0 +1,96 @@
+# Compose-файл для МАСТЕР-ноутбука.
+#
+# Поднимает: NameNode, SecondaryNameNode, ResourceManager, HistoryServer.
+#
+# Использование:
+#   1) Скопировать .env.example в .env, заполнить *_IP реальными LAN-адресами
+#      всех 3 машин.
+#   2) docker compose -f docker-compose.master.yml up -d --build
+
+x-extra-hosts: &extra_hosts
+  - "master:${MASTER_IP:?MASTER_IP должен быть задан в .env}"
+  - "worker1:${WORKER1_IP:?WORKER1_IP должен быть задан в .env}"
+  - "worker2:${WORKER2_IP:?WORKER2_IP должен быть задан в .env}"
+
+x-image: &image clustrer-hadoop:${HADOOP_VERSION:-3.3.6}
+
+services:
+  namenode:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
+    image: *image
+    container_name: namenode
+    hostname: master
+    environment:
+      HADOOP_ROLE: namenode
+      MASTER_HOST: master
+    ports:
+      - "9000:9000"   # HDFS RPC
+      - "9870:9870"   # NameNode Web UI
+    volumes:
+      - namenode_data:/data/hdfs/namenode
+      - hadoop_logs:/opt/hadoop/logs
+    extra_hosts: *extra_hosts
+    restart: unless-stopped
+
+  secondarynamenode:
+    image: *image
+    container_name: secondarynamenode
+    hostname: master
+    depends_on:
+      - namenode
+    environment:
+      HADOOP_ROLE: secondarynamenode
+      MASTER_HOST: master
+    ports:
+      - "9868:9868"   # SecondaryNameNode Web UI
+    volumes:
+      - secondary_data:/data/hdfs/secondary
+      - hadoop_logs:/opt/hadoop/logs
+    extra_hosts: *extra_hosts
+    restart: unless-stopped
+
+  resourcemanager:
+    image: *image
+    container_name: resourcemanager
+    hostname: master
+    depends_on:
+      - namenode
+    environment:
+      HADOOP_ROLE: resourcemanager
+      MASTER_HOST: master
+    ports:
+      - "8030:8030"
+      - "8031:8031"
+      - "8032:8032"
+      - "8033:8033"
+      - "8088:8088"   # YARN Web UI
+    volumes:
+      - hadoop_logs:/opt/hadoop/logs
+    extra_hosts: *extra_hosts
+    restart: unless-stopped
+
+  historyserver:
+    image: *image
+    container_name: historyserver
+    hostname: master
+    depends_on:
+      - resourcemanager
+    environment:
+      HADOOP_ROLE: historyserver
+      MASTER_HOST: master
+    ports:
+      - "10020:10020"
+      - "19888:19888"  # JobHistory Web UI
+    volumes:
+      - hadoop_logs:/opt/hadoop/logs
+    extra_hosts: *extra_hosts
+    restart: unless-stopped
+
+volumes:
+  namenode_data:
+  secondary_data:
+  hadoop_logs:
