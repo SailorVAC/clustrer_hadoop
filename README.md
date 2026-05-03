@@ -4,9 +4,11 @@ Hadoop-кластер в Docker на 3 ноутбуках: **1 мастер + 2 
 
 Стек: **Hadoop 3.3.6** (HDFS + YARN + MapReduce) на базе **OpenJDK 11**
 (`eclipse-temurin:11-jre-jammy`). Контейнеры на разных ноутбуках общаются
-друг с другом через bridge-сеть Docker и `extra_hosts`, проброшенные порты
-+ обращение по hostname'ам `master`, `worker1`, `worker2`. Никаких
-экспериментальных режимов Docker Desktop включать не нужно.
+друг с другом через bridge-сеть Docker, проброшенные порты и логические
+hostname'ы (`namenode`, `resourcemanager`, `historyserver`, `worker1`,
+`worker2`), которые на каждом контейнере резолвятся в LAN-IP реальных
+ноутбуков через `extra_hosts`. Никаких экспериментальных режимов Docker
+Desktop включать не нужно.
 
 ## Что получится
 
@@ -183,8 +185,27 @@ docker compose -f docker-compose.master.yml down -v
 ```powershell
 docker compose -f docker-compose.local.yml up -d --build
 # открой http://localhost:9870 и http://localhost:8088
+# проверь, что в HDFS подключилось 2 DataNode:
+docker exec namenode hdfs dfsadmin -report
+# и в YARN — 2 NodeManager:
+docker exec resourcemanager yarn node -list -all
+# WordCount end-to-end:
+docker exec namenode bash -c "echo 'hello hadoop hello world' > /tmp/in.txt \
+    && hdfs dfs -mkdir -p /demo/input \
+    && hdfs dfs -put -f /tmp/in.txt /demo/input/"
+docker exec resourcemanager hadoop jar \
+    /opt/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.3.6.jar \
+    wordcount /demo/input /demo/output
+docker exec namenode hdfs dfs -cat /demo/output/part-r-00000
+# уборка
 docker compose -f docker-compose.local.yml down -v
 ```
+
+В local-режиме воркер — это один контейнер на роль worker (DataNode +
+NodeManager в одном процессе), чтобы Docker DNS на bridge-сети
+однозначно резолвил `worker1`/`worker2` в один IP. На проде эти роли
+крутятся в **разных** контейнерах — там конфликта DNS нет, потому что
+hostname'ы резолвятся через `extra_hosts` в LAN-IP реальных машин.
 
 ## Структура репозитория
 

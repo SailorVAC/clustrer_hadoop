@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Запуск Hadoop-сервиса в зависимости от $HADOOP_ROLE.
-# Поддерживаемые роли: namenode | secondarynamenode | datanode |
-#                      resourcemanager | nodemanager | historyserver
+# Поддерживаемые роли:
+#   namenode | secondarynamenode | datanode |
+#   resourcemanager | nodemanager | historyserver |
+#   worker  (DataNode + NodeManager в одном контейнере, для local-compose)
 set -euo pipefail
 
 ROLE="${HADOOP_ROLE:-}"
@@ -40,7 +42,8 @@ wait_for() {
     echo "[entrypoint] ${host}:${port} доступен"
 }
 
-MASTER_HOST="${MASTER_HOST:-master}"
+NAMENODE_HOST="${NAMENODE_HOST:-namenode}"
+RESOURCEMANAGER_HOST="${RESOURCEMANAGER_HOST:-resourcemanager}"
 
 case "$ROLE" in
     namenode)
@@ -53,13 +56,13 @@ case "$ROLE" in
         ;;
 
     secondarynamenode)
-        wait_for "${MASTER_HOST}" 9000
+        wait_for "${NAMENODE_HOST}" 9000
         exec hdfs secondarynamenode
         ;;
 
     datanode)
         : "${NODE_NAME:?NODE_NAME (worker1|worker2|...) обязателен для datanode}"
-        wait_for "${MASTER_HOST}" 9000
+        wait_for "${NAMENODE_HOST}" 9000
         export HDFS_DATANODE_OPTS="-Ddfs.datanode.hostname=${NODE_NAME} ${HDFS_DATANODE_OPTS:-}"
         exec hdfs datanode
         ;;
@@ -70,14 +73,29 @@ case "$ROLE" in
 
     nodemanager)
         : "${NODE_NAME:?NODE_NAME (worker1|worker2|...) обязателен для nodemanager}"
-        wait_for "${MASTER_HOST}" 8032
+        wait_for "${RESOURCEMANAGER_HOST}" 8032
         export YARN_NODEMANAGER_OPTS="-Dyarn.nodemanager.hostname=${NODE_NAME} ${YARN_NODEMANAGER_OPTS:-}"
         exec yarn nodemanager
         ;;
 
     historyserver)
-        wait_for "${MASTER_HOST}" 8032
+        wait_for "${RESOURCEMANAGER_HOST}" 8032
         exec mapred historyserver
+        ;;
+
+    worker)
+        # Combined-режим только для docker-compose.local.yml: один
+        # контейнер с DN+NM, чтобы не было коллизий hostname'ов worker1/2
+        # на одной bridge-сети.
+        : "${NODE_NAME:?NODE_NAME (worker1|worker2|...) обязателен для worker}"
+        wait_for "${NAMENODE_HOST}" 9000
+        export HDFS_DATANODE_OPTS="-Ddfs.datanode.hostname=${NODE_NAME} ${HDFS_DATANODE_OPTS:-}"
+        echo "[entrypoint] стартую DataNode в фоне"
+        hdfs --daemon start datanode
+        wait_for "${RESOURCEMANAGER_HOST}" 8032
+        export YARN_NODEMANAGER_OPTS="-Dyarn.nodemanager.hostname=${NODE_NAME} ${YARN_NODEMANAGER_OPTS:-}"
+        echo "[entrypoint] стартую NodeManager (foreground)"
+        exec yarn nodemanager
         ;;
 
     *)

@@ -1,6 +1,9 @@
-# Single-host compose: все 5 сервисов + 2 воркера на одной машине.
-# Полезен для smoke-теста, что Dockerfile/конфиги вообще валидны,
-# до развёртывания на 3 ноутбука.
+# Single-host compose: 4 master-сервиса + 2 объединённых worker-контейнера
+# (каждый запускает DataNode + NodeManager). Полезен для smoke-теста, что
+# Dockerfile/конфиги вообще валидны, до развёртывания на 3 ноутбука.
+#
+# В отличие от production-compose, здесь worker = один контейнер на воркера,
+# чтобы Docker DNS однозначно резолвил `worker1`/`worker2` в один IP.
 #
 # Запуск:   docker compose -f docker-compose.local.yml up -d --build
 # Проверка: открыть http://localhost:9870 и http://localhost:8088
@@ -15,127 +18,85 @@ services:
       args:
         HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
     image: *image
-    container_name: local-namenode
-    hostname: master
+    container_name: namenode
+    hostname: namenode
     environment:
       HADOOP_ROLE: namenode
-      MASTER_HOST: master
     ports:
       - "9000:9000"
       - "9870:9870"
     volumes:
       - local_namenode_data:/data/hdfs/namenode
-    networks:
-      hadoop_net:
-        aliases: [master]
+    networks: [hadoop_net]
     restart: unless-stopped
 
   secondarynamenode:
     image: *image
-    container_name: local-secondarynamenode
-    hostname: master
+    container_name: secondarynamenode
+    hostname: secondarynamenode
     depends_on: [namenode]
     environment:
       HADOOP_ROLE: secondarynamenode
-      MASTER_HOST: master
     ports:
       - "9868:9868"
     volumes:
       - local_secondary_data:/data/hdfs/secondary
-    networks:
-      hadoop_net:
+    networks: [hadoop_net]
     restart: unless-stopped
 
   resourcemanager:
     image: *image
-    container_name: local-resourcemanager
-    hostname: master
+    container_name: resourcemanager
+    hostname: resourcemanager
     depends_on: [namenode]
     environment:
       HADOOP_ROLE: resourcemanager
-      MASTER_HOST: master
     ports:
       - "8088:8088"
       - "8030:8030"
       - "8031:8031"
       - "8032:8032"
       - "8033:8033"
-    networks:
-      hadoop_net:
-        aliases: [master]
+    networks: [hadoop_net]
     restart: unless-stopped
 
   historyserver:
     image: *image
-    container_name: local-historyserver
-    hostname: master
+    container_name: historyserver
+    hostname: historyserver
     depends_on: [resourcemanager]
     environment:
       HADOOP_ROLE: historyserver
-      MASTER_HOST: master
     ports:
       - "10020:10020"
       - "19888:19888"
-    networks:
-      hadoop_net:
+    networks: [hadoop_net]
     restart: unless-stopped
 
-  worker1-datanode:
+  worker1:
     image: *image
-    container_name: local-worker1-datanode
+    container_name: worker1
     hostname: worker1
-    depends_on: [namenode]
+    depends_on: [namenode, resourcemanager]
     environment:
-      HADOOP_ROLE: datanode
-      MASTER_HOST: master
+      HADOOP_ROLE: worker
       NODE_NAME: worker1
     volumes:
       - local_worker1_data:/data/hdfs/datanode
-    networks:
-      hadoop_net:
-        aliases: [worker1]
+    networks: [hadoop_net]
     restart: unless-stopped
 
-  worker1-nodemanager:
+  worker2:
     image: *image
-    container_name: local-worker1-nodemanager
-    hostname: worker1
-    depends_on: [resourcemanager, worker1-datanode]
-    environment:
-      HADOOP_ROLE: nodemanager
-      MASTER_HOST: master
-      NODE_NAME: worker1
-    networks:
-      hadoop_net:
-    restart: unless-stopped
-
-  worker2-datanode:
-    image: *image
-    container_name: local-worker2-datanode
+    container_name: worker2
     hostname: worker2
-    depends_on: [namenode]
+    depends_on: [namenode, resourcemanager]
     environment:
-      HADOOP_ROLE: datanode
-      MASTER_HOST: master
+      HADOOP_ROLE: worker
       NODE_NAME: worker2
     volumes:
       - local_worker2_data:/data/hdfs/datanode
-    networks:
-      hadoop_net:
-        aliases: [worker2]
-    restart: unless-stopped
-
-  worker2-nodemanager:
-    image: *image
-    container_name: local-worker2-nodemanager
-    hostname: worker2
-    depends_on: [resourcemanager, worker2-datanode]
-    environment:
-      HADOOP_ROLE: nodemanager
-      MASTER_HOST: master
-      NODE_NAME: worker2
-    networks:
-      hadoop_net:
+    networks: [hadoop_net]
     restart: unless-stopped
 
 volumes:

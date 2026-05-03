@@ -6,9 +6,16 @@
 #   1) Скопировать .env.example в .env, заполнить *_IP реальными LAN-адресами
 #      всех 3 машин.
 #   2) docker compose -f docker-compose.master.yml up -d --build
+#
+# Все 4 master-сервиса физически живут на одном ноуте, поэтому каждое
+# логическое имя (namenode/secondarynamenode/resourcemanager/historyserver)
+# в extra_hosts указывает на один и тот же MASTER_IP.
 
 x-extra-hosts: &extra_hosts
-  - "master:${MASTER_IP:?MASTER_IP должен быть задан в .env}"
+  - "namenode:${MASTER_IP:?MASTER_IP должен быть задан в .env}"
+  - "secondarynamenode:${MASTER_IP}"
+  - "resourcemanager:${MASTER_IP}"
+  - "historyserver:${MASTER_IP}"
   - "worker1:${WORKER1_IP:?WORKER1_IP должен быть задан в .env}"
   - "worker2:${WORKER2_IP:?WORKER2_IP должен быть задан в .env}"
 
@@ -23,10 +30,9 @@ services:
         HADOOP_VERSION: ${HADOOP_VERSION:-3.3.6}
     image: *image
     container_name: namenode
-    hostname: master
+    hostname: namenode
     environment:
       HADOOP_ROLE: namenode
-      MASTER_HOST: master
     ports:
       - "9000:9000"   # HDFS RPC
       - "9870:9870"   # NameNode Web UI
@@ -39,12 +45,11 @@ services:
   secondarynamenode:
     image: *image
     container_name: secondarynamenode
-    hostname: master
+    hostname: secondarynamenode
     depends_on:
       - namenode
     environment:
       HADOOP_ROLE: secondarynamenode
-      MASTER_HOST: master
     ports:
       - "9868:9868"   # SecondaryNameNode Web UI
     volumes:
@@ -56,12 +61,11 @@ services:
   resourcemanager:
     image: *image
     container_name: resourcemanager
-    hostname: master
+    hostname: resourcemanager
     depends_on:
       - namenode
     environment:
       HADOOP_ROLE: resourcemanager
-      MASTER_HOST: master
     ports:
       - "8030:8030"
       - "8031:8031"
@@ -76,12 +80,11 @@ services:
   historyserver:
     image: *image
     container_name: historyserver
-    hostname: master
+    hostname: historyserver
     depends_on:
       - resourcemanager
     environment:
       HADOOP_ROLE: historyserver
-      MASTER_HOST: master
     ports:
       - "10020:10020"
       - "19888:19888"  # JobHistory Web UI

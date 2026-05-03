@@ -3,7 +3,7 @@
 <configuration>
     <property>
         <name>yarn.resourcemanager.hostname</name>
-        <value>master</value>
+        <value>resourcemanager</value>
     </property>
     <property>
         <name>yarn.resourcemanager.bind-host</name>
@@ -71,7 +71,7 @@
     </property>
     <property>
         <name>yarn.log.server.url</name>
-        <value>http://master:19888/jobhistory/logs</value>
+        <value>http://historyserver:19888/jobhistory/logs</value>
     </property>
 
     <!-- Ограничиваем диапазон портов AM, чтобы их можно было пробросить из контейнера. -->

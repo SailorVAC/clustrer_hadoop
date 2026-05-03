@@ -3,8 +3,9 @@
 <configuration>
     <property>
         <name>fs.defaultFS</name>
-        <value>hdfs://master:9000</value>
-        <description>Точка входа в HDFS. Хост `master` резолвится через extra_hosts.</description>
+        <value>hdfs://namenode:9000</value>
+        <description>Точка входа в HDFS. Хост `namenode` резолвится в LAN-IP мастера
+        через extra_hosts в docker-compose.</description>
     </property>
 
     <property>
