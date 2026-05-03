@@ -42,7 +42,13 @@ RUN set -eux; \
 
 COPY config/ ${HADOOP_CONF_DIR}/
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Срезаем CR-символы на случай, если репо клонировали на Windows с
+# core.autocrlf=true: иначе shebang `#!/usr/bin/env bash\r` ломает запуск.
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
+        "${HADOOP_CONF_DIR}/hadoop-env.sh" \
+        "${HADOOP_CONF_DIR}/workers" \
+    && chmod +x /usr/local/bin/entrypoint.sh
 
 # Информационно: NameNode RPC/UI, DataNode, SecondaryNameNode,
 # ResourceManager, NodeManager, HistoryServer, MR shuffle, AM port range.
