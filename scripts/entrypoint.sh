@@ -115,10 +115,12 @@ case "$ROLE" in
     datanode)
         : "${NODE_NAME:?NODE_NAME (worker1|worker2|...) обязателен для datanode}"
         wait_for "${NAMENODE_HOST}" 9000
+        # Если порты заданы явно в .env — используем их, иначе считаем
+        # из NODE_NAME (worker1 → 9866, worker2 → 9876, ...).
         DN_OFFSET="$(compute_dn_port_offset "${NODE_NAME}")"
-        DN_HTTP_PORT=$((9864 + DN_OFFSET))
-        DN_XFER_PORT=$((9866 + DN_OFFSET))
-        DN_IPC_PORT=$((9867 + DN_OFFSET))
+        DN_HTTP_PORT="${DN_HTTP_PORT:-$((9864 + DN_OFFSET))}"
+        DN_XFER_PORT="${DN_XFER_PORT:-$((9866 + DN_OFFSET))}"
+        DN_IPC_PORT="${DN_IPC_PORT:-$((9867 + DN_OFFSET))}"
         echo "[entrypoint] DN ports: http=${DN_HTTP_PORT} xfer=${DN_XFER_PORT} ipc=${DN_IPC_PORT}"
         inject_dn_overrides "${NODE_NAME}" "${DN_XFER_PORT}" "${DN_HTTP_PORT}" "${DN_IPC_PORT}"
         exec hdfs datanode

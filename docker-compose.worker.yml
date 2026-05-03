@@ -32,12 +32,19 @@ services:
     environment:
       HADOOP_ROLE: datanode
       NODE_NAME: ${NODE_NAME}
+      DN_HTTP_PORT: ${DN_HTTP_PORT:-9864}
+      DN_XFER_PORT: ${DN_XFER_PORT:-9866}
+      DN_IPC_PORT:  ${DN_IPC_PORT:-9867}
     ports:
-      # Диапазон покрывает worker1..worker9 (entrypoint.sh выбирает
-      # 9866 + (N-1)*10 для xferPort, чтобы у NameNode не было коллизии
-      # одинаковых (source_ip, xferPort) от двух разных DataNode'ов
-      # за NAT мастер-ноута).
-      - "9864-9890:9864-9890"
+      # На worker1 — дефолт 9864/9866/9867; на worker2 в .env пропиши
+      # DN_HTTP_PORT=9874, DN_XFER_PORT=9876, DN_IPC_PORT=9877 (и т.д.
+      # для workerN: 9866+(N-1)*10). Разные xferPort нужны, чтобы NN
+      # не путал обоих DN под одним (source_ip, port) после NAT мастер-bridge.
+      # Явные порты вместо range'а — обход бага Docker Desktop на Windows,
+      # который криво форвардит "9864-9890:9864-9890".
+      - "${DN_HTTP_PORT:-9864}:${DN_HTTP_PORT:-9864}"
+      - "${DN_XFER_PORT:-9866}:${DN_XFER_PORT:-9866}"
+      - "${DN_IPC_PORT:-9867}:${DN_IPC_PORT:-9867}"
     volumes:
       - datanode_data:/data/hdfs/datanode
       - hadoop_logs:/opt/hadoop/logs
