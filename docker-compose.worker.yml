@@ -33,9 +33,11 @@ services:
       HADOOP_ROLE: datanode
       NODE_NAME: ${NODE_NAME}
     ports:
-      - "9864:9864"   # DataNode Web UI
-      - "9866:9866"   # DataNode data transfer
-      - "9867:9867"   # DataNode IPC
+      # Диапазон покрывает worker1..worker9 (entrypoint.sh выбирает
+      # 9866 + (N-1)*10 для xferPort, чтобы у NameNode не было коллизии
+      # одинаковых (source_ip, xferPort) от двух разных DataNode'ов
+      # за NAT мастер-ноута).
+      - "9864-9890:9864-9890"
     volumes:
       - datanode_data:/data/hdfs/datanode
       - hadoop_logs:/opt/hadoop/logs
