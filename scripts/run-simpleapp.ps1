@@ -89,7 +89,11 @@ Write-Host ""
 # Required for multi-host Docker clusters where each host has its own
 # bridge network: without it, reduce tasks on host B cannot reach the AM
 # on host A via internal Docker IPs (172.18.x.x).
-docker exec $SubmitContainer hadoop jar "/tmp/$JarName" "-Dmapreduce.job.ubertask.enable=true" $InputPath $OutputPath
+docker exec $SubmitContainer hadoop jar "/tmp/$JarName" `
+    "-Dmapreduce.job.ubertask.enable=true" `
+    "-Dmapreduce.job.ubertask.maxmaps=20" `
+    "-Dmapreduce.job.ubertask.maxbytes=536870912" `
+    $InputPath $OutputPath
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: MapReduce job failed" -ForegroundColor Red

@@ -76,6 +76,8 @@ echo ""
 docker exec "$SUBMIT_CONTAINER" \
     hadoop jar "/tmp/${JAR_NAME}" \
     -Dmapreduce.job.ubertask.enable=true \
+    -Dmapreduce.job.ubertask.maxmaps=20 \
+    -Dmapreduce.job.ubertask.maxbytes=536870912 \
     "$HDFS_INPUT" "$HDFS_OUTPUT"
 
 # ---------- 6. Show results ----------
