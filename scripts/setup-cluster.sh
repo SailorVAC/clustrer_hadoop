@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-#  Интерактивный мастер настройки Hadoop-кластера.
+#  Мастер настройки Hadoop-кластера.
 #  Генерирует docker-compose и .env файлы для каждой машины.
 #
-#  Использование:  bash scripts/setup-cluster.sh
+#  Если есть cluster.conf — читает IP и роли оттуда.
+#  Иначе — интерактивный режим.
+#
+#  Использование:
+#    bash scripts/setup-cluster.sh                  # auto/interactive
+#    bash scripts/setup-cluster.sh -c my-cluster.conf  # явный файл
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -11,6 +16,15 @@ HADOOP_VERSION="3.3.6"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 OUTPUT_DIR="$REPO_ROOT/generated"
+CONFIG_FILE=""
+
+# Parse CLI args
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c|--config) CONFIG_FILE="$2"; shift 2 ;;
+        *) echo "Использование: $0 [-c cluster.conf]"; exit 1 ;;
+    esac
+done
 
 # ─── colors ───
 C_CYAN='\033[0;36m'
@@ -253,6 +267,56 @@ EOF
 }
 
 # ─────────────────────────────────────────────────────────────
+#  Config file parser
+# ─────────────────────────────────────────────────────────────
+
+role_name_to_num() {
+    case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in
+        namenode)          echo 1 ;;
+        secondarynamenode) echo 2 ;;
+        resourcemanager)   echo 3 ;;
+        historyserver)     echo 4 ;;
+        datanode)          echo 5 ;;
+        *) echo "ОШИБКА: неизвестная роль '$1'" >&2; exit 1 ;;
+    esac
+}
+
+parse_cluster_conf() {
+    local conf_file="$1"
+    local idx=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="$(echo "$line" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+        [[ -z "$line" || "$line" == \#* ]] && continue
+
+        local ip roles_str
+        ip="$(echo "$line" | awk '{print $1}')"
+        roles_str="$(echo "$line" | awk '{$1=""; print}' | sed 's/^[[:space:]]*//')"
+
+        if ! [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            printf "${C_RED}  ОШИБКА: неверный IP в строке: %s${C_RESET}\n" "$line" >&2
+            exit 1
+        fi
+
+        # Convert role names to numbers
+        local nums=""
+        for r in $(echo "$roles_str" | tr ',' ' '); do
+            r="$(echo "$r" | tr -d ' ')"
+            [[ -z "$r" ]] && continue
+            local n
+            n=$(role_name_to_num "$r")
+            nums+="$n,"
+        done
+        nums="$(echo "$nums" | sed 's/,$//' | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')"
+
+        MACHINE_IPS+=("$ip")
+        MACHINE_ROLES+=("$nums")
+        MACHINE_WORKER_NAMES+=("")
+        idx=$(( idx + 1 ))
+    done < "$conf_file"
+    machine_count=$idx
+}
+
+# ─────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────
 
@@ -262,56 +326,96 @@ printf "${C_CYAN}  Мастер настройки Hadoop-кластера${C_RE
 printf "${C_DCYAN}  Hadoop $HADOOP_VERSION  |  Docker  |  Multi-host${C_RESET}\n"
 printf "${C_CYAN}================================================${C_RESET}\n"
 
-# ── 1. Machine count ──
-printf "\n${C_CYAN}>>> Шаг 1: Количество машин${C_RESET}\n"
-machine_count=$(read_validated "Сколько машин в кластере?" "3" '^[0-9]+$')
-if (( machine_count < 2 || machine_count > 20 )); then
-    printf "${C_RED}  Допустимо от 2 до 20 машин.${C_RESET}\n"
-    exit 1
-fi
-
-# ── 2. Collect info ──
-printf "\n${C_CYAN}>>> Шаг 2: Информация о каждой машине${C_RESET}\n\n"
-printf "${C_GRAY}  Роли:${C_RESET}\n"
-printf "${C_GRAY}    1) NameNode              — хранение метаданных HDFS (нужен ровно 1)${C_RESET}\n"
-printf "${C_GRAY}    2) SecondaryNameNode     — чекпоинт NameNode${C_RESET}\n"
-printf "${C_GRAY}    3) ResourceManager       — управление YARN (нужен ровно 1)${C_RESET}\n"
-printf "${C_GRAY}    4) HistoryServer         — история MapReduce-задач${C_RESET}\n"
-printf "${C_GRAY}    5) DataNode + NodeManager — хранение данных + выполнение задач${C_RESET}\n\n"
-
 # Arrays to hold machine data
 declare -a MACHINE_IPS=()
 declare -a MACHINE_ROLES=()
 declare -a MACHINE_WORKER_NAMES=()
 
-for (( i = 1; i <= machine_count; i++ )); do
-    printf "${C_YELLOW}  --- Машина $i из $machine_count ---${C_RESET}\n"
+# ── Determine config file ──
+conf_file=""
+if [[ -n "$CONFIG_FILE" ]]; then
+    if [[ -f "$CONFIG_FILE" ]]; then
+        conf_file="$CONFIG_FILE"
+    else
+        printf "${C_RED}  ОШИБКА: файл %s не найден${C_RESET}\n" "$CONFIG_FILE"
+        exit 1
+    fi
+elif [[ -f "$REPO_ROOT/cluster.conf" ]]; then
+    conf_file="$REPO_ROOT/cluster.conf"
+fi
 
-    ip=$(read_validated "IP-адрес" "" '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$')
-    roles=$(read_validated "Роли (номера через запятую, напр. 1,2,3,4 или 5)" "" '^[1-5](,[[:space:]]*[1-5])*$')
+if [[ -n "$conf_file" ]]; then
+    # ── Read from config file ──
+    printf "\n${C_CYAN}>>> Читаю конфигурацию из %s${C_RESET}\n\n" "$conf_file"
+    parse_cluster_conf "$conf_file"
 
-    # Normalize: remove spaces, sort unique
-    roles=$(echo "$roles" | tr -d ' ' | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+    if (( machine_count < 2 )); then
+        printf "${C_RED}  ОШИБКА: в конфиге меньше 2 машин${C_RESET}\n"
+        exit 1
+    fi
 
-    local_names=""
-    for r in $(echo "$roles" | tr ',' ' '); do
-        case "$r" in
-            1) local_names+="NameNode " ;;
-            2) local_names+="SNN " ;;
-            3) local_names+="ResourceManager " ;;
-            4) local_names+="HistoryServer " ;;
-            5) local_names+="DataNode+NM " ;;
-        esac
+    for (( i = 0; i < machine_count; i++ )); do
+        local_names=""
+        for r in $(echo "${MACHINE_ROLES[$i]}" | tr ',' ' '); do
+            case "$r" in
+                1) local_names+="NameNode " ;;
+                2) local_names+="SNN " ;;
+                3) local_names+="ResourceManager " ;;
+                4) local_names+="HistoryServer " ;;
+                5) local_names+="DataNode+NM " ;;
+            esac
+        done
+        printf "  ${C_GREEN}%s  ->  %s${C_RESET}\n" "${MACHINE_IPS[$i]}" "$local_names"
     done
-    printf "  ${C_GREEN}  -> $local_names${C_RESET}\n\n"
+else
+    # ── Interactive mode ──
+    printf "\n${C_YELLOW}>>> cluster.conf не найден — интерактивный режим${C_RESET}\n"
+    printf "${C_GRAY}    (создайте cluster.conf из cluster.conf.example для автоматического режима)${C_RESET}\n"
 
-    MACHINE_IPS+=("$ip")
-    MACHINE_ROLES+=("$roles")
-    MACHINE_WORKER_NAMES+=("")
-done
+    printf "\n${C_CYAN}>>> Шаг 1: Количество машин${C_RESET}\n"
+    machine_count=$(read_validated "Сколько машин в кластере?" "3" '^[0-9]+$')
+    if (( machine_count < 2 || machine_count > 20 )); then
+        printf "${C_RED}  Допустимо от 2 до 20 машин.${C_RESET}\n"
+        exit 1
+    fi
 
-# ── 3. Validate ──
-printf "${C_CYAN}>>> Шаг 3: Проверка${C_RESET}\n"
+    printf "\n${C_CYAN}>>> Шаг 2: Информация о каждой машине${C_RESET}\n\n"
+    printf "${C_GRAY}  Роли:${C_RESET}\n"
+    printf "${C_GRAY}    1) NameNode              — хранение метаданных HDFS (нужен ровно 1)${C_RESET}\n"
+    printf "${C_GRAY}    2) SecondaryNameNode     — чекпоинт NameNode${C_RESET}\n"
+    printf "${C_GRAY}    3) ResourceManager       — управление YARN (нужен ровно 1)${C_RESET}\n"
+    printf "${C_GRAY}    4) HistoryServer         — история MapReduce-задач${C_RESET}\n"
+    printf "${C_GRAY}    5) DataNode + NodeManager — хранение данных + выполнение задач${C_RESET}\n\n"
+
+    for (( i = 1; i <= machine_count; i++ )); do
+        printf "${C_YELLOW}  --- Машина $i из $machine_count ---${C_RESET}\n"
+
+        ip=$(read_validated "IP-адрес" "" '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$')
+        roles=$(read_validated "Роли (номера через запятую, напр. 1,2,3,4 или 5)" "" '^[1-5](,[[:space:]]*[1-5])*$')
+
+        # Normalize: remove spaces, sort unique
+        roles=$(echo "$roles" | tr -d ' ' | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+
+        local_names=""
+        for r in $(echo "$roles" | tr ',' ' '); do
+            case "$r" in
+                1) local_names+="NameNode " ;;
+                2) local_names+="SNN " ;;
+                3) local_names+="ResourceManager " ;;
+                4) local_names+="HistoryServer " ;;
+                5) local_names+="DataNode+NM " ;;
+            esac
+        done
+        printf "  ${C_GREEN}  -> $local_names${C_RESET}\n\n"
+
+        MACHINE_IPS+=("$ip")
+        MACHINE_ROLES+=("$roles")
+        MACHINE_WORKER_NAMES+=("")
+    done
+fi
+
+# ── Validate ──
+printf "\n${C_CYAN}>>> Проверка конфигурации${C_RESET}\n"
 
 nn_count=0; rm_count=0; dn_count=0
 for roles in "${MACHINE_ROLES[@]}"; do

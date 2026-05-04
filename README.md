@@ -99,17 +99,41 @@
 
 ### Использование
 
-**PowerShell (Windows):**
+#### Способ 1: Через конфиг-файл (рекомендуется)
+
+Скопируйте шаблон и впишите свои IP:
+
 ```powershell
-.\scripts\setup-cluster.ps1
+copy cluster.conf.example cluster.conf
+notepad cluster.conf
 ```
 
-**Bash (Linux/Mac/WSL):**
-```bash
-bash scripts/setup-cluster.sh
+Формат `cluster.conf`:
+```ini
+# IP_АДРЕС  роль1,роль2,...
+192.168.1.10  namenode,secondarynamenode,resourcemanager,historyserver
+192.168.1.11  datanode
+192.168.1.12  datanode
 ```
 
-Скрипт задаст вопросы интерактивно:
+Доступные роли: `namenode`, `secondarynamenode`, `resourcemanager`, `historyserver`, `datanode`.
+
+Затем запустите скрипт — он прочитает `cluster.conf` автоматически:
+
+```powershell
+.\scripts\setup-cluster.ps1                    # PowerShell
+bash scripts/setup-cluster.sh                  # Bash
+```
+
+Можно указать другой файл:
+```powershell
+.\scripts\setup-cluster.ps1 -Config my.conf   # PowerShell
+bash scripts/setup-cluster.sh -c my.conf       # Bash
+```
+
+#### Способ 2: Интерактивный режим
+
+Если `cluster.conf` нет, скрипт задаст вопросы интерактивно:
 
 ```
 >>> Шаг 1: Количество машин
@@ -504,6 +528,7 @@ clustrer_hadoop/
 ├── docker-compose.worker.yml    # Compose для воркер-ноута
 ├── docker-compose.local.yml     # All-in-one для теста на 1 машине
 ├── .env.example                 # Шаблон конфигурации (скопировать в .env)
+├── cluster.conf.example         # Шаблон топологии кластера
 │
 ├── app/
 │   └── SimpleApp/               # MapReduce-приложение LineCount

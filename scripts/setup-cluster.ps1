@@ -1,15 +1,22 @@
 <#
 .SYNOPSIS
-    Интерактивный мастер настройки Hadoop-кластера.
+    Мастер настройки Hadoop-кластера.
 .DESCRIPTION
     Генерирует docker-compose и .env файлы для каждой машины кластера
     на основе выбранных ролей. Результат — в папке generated/.
+
+    Если в корне репозитория есть cluster.conf — IP и роли читаются
+    из него автоматически. Иначе скрипт задаёт вопросы интерактивно.
 .EXAMPLE
     .\scripts\setup-cluster.ps1
+.EXAMPLE
+    .\scripts\setup-cluster.ps1 -Config my-cluster.conf
 #>
 
 [CmdletBinding()]
-param()
+param(
+    [string]$Config = ""
+)
 
 $ErrorActionPreference = "Stop"
 $HadoopVersion = "3.3.6"
@@ -256,6 +263,58 @@ $depBlock    environment:
 }
 
 # ─────────────────────────────────────────────────────────────
+#  Config file parser
+# ─────────────────────────────────────────────────────────────
+
+$RoleMap = @{
+    "namenode"          = 1
+    "secondarynamenode" = 2
+    "resourcemanager"   = 3
+    "historyserver"     = 4
+    "datanode"          = 5
+}
+
+function Parse-ClusterConf {
+    param([string]$Path)
+    $result = @()
+    $idx = 0
+    foreach ($line in (Get-Content $Path)) {
+        $line = $line.Trim()
+        if (-not $line -or $line.StartsWith('#')) { continue }
+
+        if ($line -match '^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+(.+)$') {
+            $ip = $Matches[1]
+            $rolesRaw = $Matches[2].Trim()
+            $idx++
+
+            $selectedRoles = @()
+            foreach ($r in ($rolesRaw -split ',')) {
+                $r = $r.Trim().ToLower()
+                if ($RoleMap.ContainsKey($r)) {
+                    $selectedRoles += $RoleMap[$r]
+                } else {
+                    Write-Host "  ОШИБКА: неизвестная роль '$r' в строке: $line" -ForegroundColor Red
+                    exit 1
+                }
+            }
+            $selectedRoles = @($selectedRoles | Sort-Object -Unique)
+
+            $result += [PSCustomObject]@{
+                Index      = $idx
+                IP         = $ip
+                Roles      = $selectedRoles
+                WorkerName = $null
+            }
+        } else {
+            Write-Host "  ОШИБКА: неверный формат строки: $line" -ForegroundColor Red
+            Write-Host "  Ожидается: IP_АДРЕС  роль1,роль2,..." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    return $result
+}
+
+# ─────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────
 
@@ -265,58 +324,95 @@ Write-Host "  Мастер настройки Hadoop-кластера" -Foregrou
 Write-Host "  Hadoop $HadoopVersion  |  Docker  |  Multi-host" -ForegroundColor DarkCyan
 Write-Host "================================================" -ForegroundColor Cyan
 
-# ── 1. Number of machines ──
-Write-Host ""
-Write-Host ">>> Шаг 1: Количество машин" -ForegroundColor Cyan
-
-$machineCount = [int](Read-Validated `
-    -Prompt "Сколько машин в кластере?" `
-    -Default "3" `
-    -Check { param($v) $v -match '^\d+$' -and [int]$v -ge 2 -and [int]$v -le 20 })
-
-# ── 2. Collect info ──
-Write-Host ""
-Write-Host ">>> Шаг 2: Информация о каждой машине" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Роли:" -ForegroundColor Gray
-Write-Host "    1) NameNode              — хранение метаданных HDFS (нужен ровно 1)" -ForegroundColor Gray
-Write-Host "    2) SecondaryNameNode     — чекпоинт NameNode" -ForegroundColor Gray
-Write-Host "    3) ResourceManager       — управление YARN (нужен ровно 1)" -ForegroundColor Gray
-Write-Host "    4) HistoryServer         — история MapReduce-задач" -ForegroundColor Gray
-Write-Host "    5) DataNode + NodeManager — хранение данных + выполнение задач" -ForegroundColor Gray
-Write-Host ""
+# ── Determine config file path ──
+$confFile = ""
+if ($Config) {
+    if (Test-Path $Config) {
+        $confFile = $Config
+    } else {
+        Write-Host "  ОШИБКА: файл $Config не найден" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    $defaultConf = Join-Path $RepoRoot "cluster.conf"
+    if (Test-Path $defaultConf) { $confFile = $defaultConf }
+}
 
 $machines = @()
 
-for ($i = 1; $i -le $machineCount; $i++) {
-    Write-Host "  --- Машина $i из $machineCount ---" -ForegroundColor Yellow
+if ($confFile) {
+    # ── Read from config file ──
+    Write-Host ""
+    Write-Host ">>> Читаю конфигурацию из $confFile" -ForegroundColor Cyan
+    $machines = @(Parse-ClusterConf $confFile)
 
-    $ip = Read-Validated `
-        -Prompt "    IP-адрес" `
-        -Check { param($v) $v -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' }
-
-    $roleStr = Read-Validated `
-        -Prompt "    Роли (номера через запятую, напр. 1,2,3,4 или 5)" `
-        -Check { param($v) $v -match '^[1-5](,\s*[1-5])*$' }
-
-    $selectedRoles = @($roleStr -split ',' | ForEach-Object { [int]$_.Trim() } | Sort-Object -Unique)
-
-    $names = $selectedRoles | ForEach-Object {
-        switch ($_) { 1 {"NameNode"} 2 {"SNN"} 3 {"ResourceManager"} 4 {"HistoryServer"} 5 {"DataNode+NM"} }
+    if ($machines.Count -lt 2) {
+        Write-Host "  ОШИБКА: в конфиге меньше 2 машин" -ForegroundColor Red
+        exit 1
     }
-    Write-Host "    -> $($names -join ', ')" -ForegroundColor Green
+
+    Write-Host ""
+    foreach ($m in $machines) {
+        $names = $m.Roles | ForEach-Object {
+            switch ($_) { 1 {"NameNode"} 2 {"SNN"} 3 {"ResourceManager"} 4 {"HistoryServer"} 5 {"DataNode+NM"} }
+        }
+        Write-Host "  $($m.IP)  ->  $($names -join ', ')" -ForegroundColor Green
+    }
+} else {
+    # ── Interactive mode ──
+    Write-Host ""
+    Write-Host ">>> cluster.conf не найден — интерактивный режим" -ForegroundColor Yellow
+    Write-Host "    (создайте cluster.conf из cluster.conf.example для автоматического режима)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host ">>> Шаг 1: Количество машин" -ForegroundColor Cyan
+
+    $machineCount = [int](Read-Validated `
+        -Prompt "Сколько машин в кластере?" `
+        -Default "3" `
+        -Check { param($v) $v -match '^\d+$' -and [int]$v -ge 2 -and [int]$v -le 20 })
+
+    Write-Host ""
+    Write-Host ">>> Шаг 2: Информация о каждой машине" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  Роли:" -ForegroundColor Gray
+    Write-Host "    1) NameNode              — хранение метаданных HDFS (нужен ровно 1)" -ForegroundColor Gray
+    Write-Host "    2) SecondaryNameNode     — чекпоинт NameNode" -ForegroundColor Gray
+    Write-Host "    3) ResourceManager       — управление YARN (нужен ровно 1)" -ForegroundColor Gray
+    Write-Host "    4) HistoryServer         — история MapReduce-задач" -ForegroundColor Gray
+    Write-Host "    5) DataNode + NodeManager — хранение данных + выполнение задач" -ForegroundColor Gray
     Write-Host ""
 
-    $machines += [PSCustomObject]@{
-        Index      = $i
-        IP         = $ip
-        Roles      = $selectedRoles
-        WorkerName = $null
+    for ($i = 1; $i -le $machineCount; $i++) {
+        Write-Host "  --- Машина $i из $machineCount ---" -ForegroundColor Yellow
+
+        $ip = Read-Validated `
+            -Prompt "    IP-адрес" `
+            -Check { param($v) $v -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$' }
+
+        $roleStr = Read-Validated `
+            -Prompt "    Роли (номера через запятую, напр. 1,2,3,4 или 5)" `
+            -Check { param($v) $v -match '^[1-5](,\s*[1-5])*$' }
+
+        $selectedRoles = @($roleStr -split ',' | ForEach-Object { [int]$_.Trim() } | Sort-Object -Unique)
+
+        $names = $selectedRoles | ForEach-Object {
+            switch ($_) { 1 {"NameNode"} 2 {"SNN"} 3 {"ResourceManager"} 4 {"HistoryServer"} 5 {"DataNode+NM"} }
+        }
+        Write-Host "    -> $($names -join ', ')" -ForegroundColor Green
+        Write-Host ""
+
+        $machines += [PSCustomObject]@{
+            Index      = $i
+            IP         = $ip
+            Roles      = $selectedRoles
+            WorkerName = $null
+        }
     }
 }
 
-# ── 3. Validate ──
-Write-Host ">>> Шаг 3: Проверка" -ForegroundColor Cyan
+# ── Validate ──
+Write-Host ""
+Write-Host ">>> Проверка конфигурации" -ForegroundColor Cyan
 
 $nnCount  = @($machines | Where-Object { $_.Roles -contains 1 }).Count
 $rmCount  = @($machines | Where-Object { $_.Roles -contains 3 }).Count
