@@ -233,9 +233,9 @@ $depBlock    environment:
       DN_XFER_PORT: $XferPort
       DN_IPC_PORT: $IpcPort
     ports:
-      - "${HttpPort}:${HttpPort}"
-      - "${XferPort}:${XferPort}"
-      - "${IpcPort}:${IpcPort}"
+      - "$($HttpPort):$($HttpPort)"
+      - "$($XferPort):$($XferPort)"
+      - "$($IpcPort):$($IpcPort)"
     volumes:
       - datanode_data:/data/hdfs/datanode
       - hadoop_logs:/opt/hadoop/logs
