@@ -12,7 +12,7 @@ param(
     [string]$OutputPath = "/simpleapp/output"
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $JarName  = "SimpleApp-1.0-SNAPSHOT.jar"
@@ -22,6 +22,10 @@ $JarPath  = Join-Path $RepoRoot "app\SimpleApp\target\$JarName"
 if (-not (Test-Path $JarPath)) {
     Write-Host "=== JAR not found, starting build ==="
     & (Join-Path $RepoRoot "scripts\build-app.ps1")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: build failed" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # ---------- 2. Find running container ----------
@@ -34,7 +38,8 @@ foreach ($c in @("resourcemanager", "namenode")) {
     }
 }
 if (-not $SubmitContainer) {
-    Write-Error "Error: no running namenode or resourcemanager container found.`nMake sure the cluster is up (docker compose ... up -d)."
+    Write-Host "ERROR: no running namenode or resourcemanager container found." -ForegroundColor Red
+    Write-Host "Make sure the cluster is up (docker compose ... up -d)."
     exit 1
 }
 Write-Host "=== Using container: $SubmitContainer ==="
@@ -49,6 +54,10 @@ if ($nnRunning -ne "true") {
 # ---------- 3. Copy JAR into container ----------
 Write-Host "=== Copying JAR into container ==="
 docker cp $JarPath "${SubmitContainer}:/tmp/${JarName}"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: failed to copy JAR" -ForegroundColor Red
+    exit 1
+}
 
 # ---------- 4. Prepare input data in HDFS ----------
 Write-Host "=== Preparing HDFS (input=$InputPath, output=$OutputPath) ==="
@@ -56,9 +65,14 @@ Write-Host "=== Preparing HDFS (input=$InputPath, output=$OutputPath) ==="
 # Remove previous output if exists
 docker exec $HdfsContainer hdfs dfs -rm -r -f $OutputPath 2>$null
 
-# If input directory is empty, create a sample file
-$existing = docker exec $HdfsContainer hdfs dfs -ls $InputPath 2>&1
-if ($LASTEXITCODE -ne 0 -or $existing -match "No such file") {
+# If input directory does not exist, create a sample file
+$needSample = $false
+docker exec $HdfsContainer hdfs dfs -test -d $InputPath 2>$null
+if ($LASTEXITCODE -ne 0) {
+    $needSample = $true
+}
+
+if ($needSample) {
     Write-Host "=== Creating sample file in HDFS ==="
     docker exec $HdfsContainer bash -c "cat > /tmp/sample.txt << 'ENDOFFILE'
 Hadoop is a framework for distributed processing of large data sets.
@@ -83,13 +97,10 @@ Write-Host "    Input:  $InputPath"
 Write-Host "    Output: $OutputPath"
 Write-Host ""
 
-docker exec $SubmitContainer `
-    hadoop jar "/tmp/$JarName" `
-    by.bsu.rct.bigdata.LineCountDriverMR `
-    $InputPath $OutputPath
+docker exec $SubmitContainer hadoop jar "/tmp/$JarName" by.bsu.rct.bigdata.LineCountDriverMR $InputPath $OutputPath
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "MapReduce job failed"
+    Write-Host "ERROR: MapReduce job failed" -ForegroundColor Red
     exit 1
 }
 
