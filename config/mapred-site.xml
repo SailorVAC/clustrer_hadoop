@@ -49,4 +49,26 @@
         <name>dfs.datanode.use.datanode.hostname</name>
         <value>true</value>
     </property>
+
+    <!-- Force smaller splits so more map tasks are created and YARN distributes
+         them across multiple nodes instead of concentrating on one. -->
+    <property>
+        <name>mapreduce.input.fileinputformat.split.maxsize</name>
+        <value>33554432</value>
+        <description>Max split = 32 MB (default 128 MB block size creates too few maps for small clusters)</description>
+    </property>
+
+    <!-- Reduce memory per task so more tasks fit on each node simultaneously -->
+    <property>
+        <name>mapreduce.map.memory.mb</name>
+        <value>512</value>
+    </property>
+    <property>
+        <name>mapreduce.reduce.memory.mb</name>
+        <value>512</value>
+    </property>
+    <property>
+        <name>yarn.app.mapreduce.am.resource.mb</name>
+        <value>512</value>
+    </property>
 </configuration>

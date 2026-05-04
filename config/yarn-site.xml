@@ -91,4 +91,11 @@
         <name>yarn.nodemanager.pmem-check-enabled</name>
         <value>true</value>
     </property>
+
+    <!-- Relax locality so YARN spreads tasks across nodes instead of waiting
+         for a data-local slot on a single busy node. -->
+    <property>
+        <name>yarn.scheduler.capacity.node-locality-delay</name>
+        <value>0</value>
+    </property>
 </configuration>
