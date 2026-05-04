@@ -1,15 +1,15 @@
-# Build SimpleApp, upload test data to HDFS and run the MapReduce job.
+# Build SimpleApp and run the LineCount MapReduce job.
 #
 # Usage (from repo root):
-#   .\scripts\run-simpleapp.ps1                                  # smoke test
-#   .\scripts\run-simpleapp.ps1 -InputPath /demo/in -OutputPath /demo/out
+#   .\scripts\run-simpleapp.ps1                                  # default paths
+#   .\scripts\run-simpleapp.ps1 -InputPath /my/in -OutputPath /my/out
 #
 # For multi-host cluster: run this on the master node where
 # namenode and resourcemanager containers are available.
 
 param(
-    [string]$InputPath  = "/simpleapp/input",
-    [string]$OutputPath = "/simpleapp/output"
+    [string]$InputPath  = "/user/demo/input",
+    [string]$OutputPath = "/user/demo/output"
 )
 
 $ErrorActionPreference = "Continue"
@@ -59,36 +59,20 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# ---------- 4. Prepare input data in HDFS ----------
-Write-Host "=== Preparing HDFS (input=$InputPath, output=$OutputPath) ==="
+# ---------- 4. Verify input data exists in HDFS ----------
+Write-Host "=== Checking HDFS input ($InputPath) ==="
+
+docker exec $HdfsContainer hdfs dfs -test -d $InputPath 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: input directory $InputPath does not exist in HDFS." -ForegroundColor Red
+    Write-Host "Upload your data first, e.g.:"
+    Write-Host "  docker exec namenode hdfs dfs -mkdir -p $InputPath"
+    Write-Host "  docker exec namenode hdfs dfs -put <local_file> $InputPath/"
+    exit 1
+}
 
 # Remove previous output if exists
 docker exec $HdfsContainer hdfs dfs -rm -r -f $OutputPath 2>$null
-
-# If input directory does not exist, create a sample file
-$needSample = $false
-docker exec $HdfsContainer hdfs dfs -test -d $InputPath 2>$null
-if ($LASTEXITCODE -ne 0) {
-    $needSample = $true
-}
-
-if ($needSample) {
-    Write-Host "=== Creating sample file in HDFS ==="
-    docker exec $HdfsContainer bash -c "cat > /tmp/sample.txt << 'ENDOFFILE'
-Hadoop is a framework for distributed processing of large data sets.
-It runs on a cluster of commodity servers.
-MapReduce splits a task into small subtasks.
-Each node processes its own portion of data.
-Results are combined during the Reduce phase.
-HDFS provides reliable storage with replication.
-YARN manages cluster resources.
-Hadoop is widely used in industry.
-This is a demo - LineCount counts lines.
-Hello, Hadoop!
-ENDOFFILE"
-    docker exec $HdfsContainer hdfs dfs -mkdir -p $InputPath
-    docker exec $HdfsContainer hdfs dfs -put -f /tmp/sample.txt "$InputPath/"
-}
 
 # ---------- 5. Run MapReduce job ----------
 Write-Host ""

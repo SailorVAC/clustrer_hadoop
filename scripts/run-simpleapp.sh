@@ -1,27 +1,25 @@
 #!/usr/bin/env bash
-# Сборка SimpleApp, загрузка тестового файла в HDFS и запуск MapReduce-job.
+# Build SimpleApp and run the LineCount MapReduce job.
 #
-# Использование:
-#   ./scripts/run-simpleapp.sh                         # smoke-тест со встроенным файлом
-#   ./scripts/run-simpleapp.sh /demo/input /demo/output # свои пути в HDFS
+# Usage:
+#   ./scripts/run-simpleapp.sh                                 # default paths
+#   ./scripts/run-simpleapp.sh /my/input /my/output            # custom paths
 #
-# Для multi-host кластера: скрипт запускается на мастер-ноуте, где
-# доступны контейнеры namenode и resourcemanager.
+# For multi-host cluster: run this on the master node where
+# namenode and resourcemanager containers are available.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JAR_NAME="SimpleApp-1.0-SNAPSHOT.jar"
 JAR_PATH="${REPO_ROOT}/app/SimpleApp/target/${JAR_NAME}"
 
-# ---------- 1. Сборка, если JAR ещё не собран ----------
+# ---------- 1. Build JAR if not yet built ----------
 if [[ ! -f "$JAR_PATH" ]]; then
-    echo "=== JAR не найден, запускаю сборку ==="
+    echo "=== JAR not found, starting build ==="
     bash "${REPO_ROOT}/scripts/build-app.sh"
 fi
 
-# ---------- 2. Определяем контейнер для запуска ----------
-# В local-compose resourcemanager — отдельный контейнер;
-# в multi-host — тоже. Ищем первый живой из списка.
+# ---------- 2. Find running container ----------
 SUBMIT_CONTAINER=""
 for c in resourcemanager namenode; do
     if docker inspect --format='{{.State.Running}}' "$c" 2>/dev/null | grep -q true; then
@@ -30,57 +28,44 @@ for c in resourcemanager namenode; do
     fi
 done
 if [[ -z "$SUBMIT_CONTAINER" ]]; then
-    echo "Ошибка: не найден запущенный контейнер namenode или resourcemanager." >&2
-    echo "Убедитесь, что кластер поднят (docker compose ... up -d)." >&2
+    echo "ERROR: no running namenode or resourcemanager container found." >&2
+    echo "Make sure the cluster is up (docker compose ... up -d)." >&2
     exit 1
 fi
-echo "=== Используем контейнер: ${SUBMIT_CONTAINER} ==="
+echo "=== Using container: ${SUBMIT_CONTAINER} ==="
 
-# Определяем контейнер с HDFS-клиентом (namenode)
+# Find HDFS client container (namenode)
 HDFS_CONTAINER="namenode"
 if ! docker inspect --format='{{.State.Running}}' "$HDFS_CONTAINER" 2>/dev/null | grep -q true; then
     HDFS_CONTAINER="$SUBMIT_CONTAINER"
 fi
 
-# ---------- 3. Копируем JAR в контейнер ----------
-echo "=== Копирую JAR в контейнер ==="
+# ---------- 3. Copy JAR into container ----------
+echo "=== Copying JAR into container ==="
 docker cp "$JAR_PATH" "${SUBMIT_CONTAINER}:/tmp/${JAR_NAME}"
 
-# ---------- 4. Готовим входные данные в HDFS ----------
-HDFS_INPUT="${1:-/simpleapp/input}"
-HDFS_OUTPUT="${2:-/simpleapp/output}"
+# ---------- 4. Verify input data exists in HDFS ----------
+HDFS_INPUT="${1:-/user/demo/input}"
+HDFS_OUTPUT="${2:-/user/demo/output}"
 
-echo "=== Подготовка HDFS (input=${HDFS_INPUT}, output=${HDFS_OUTPUT}) ==="
+echo "=== Checking HDFS input (${HDFS_INPUT}) ==="
 
-# Удалим предыдущий output, если есть
-docker exec "$HDFS_CONTAINER" hdfs dfs -rm -r -f "$HDFS_OUTPUT" 2>/dev/null || true
-
-# Если входная директория пуста — кладём тестовый файл
-EXISTING=$(docker exec "$HDFS_CONTAINER" hdfs dfs -ls "$HDFS_INPUT" 2>/dev/null || true)
-if [[ -z "$EXISTING" || "$EXISTING" == *"No such file"* ]]; then
-    echo "=== Создаю тестовый файл в HDFS ==="
-    docker exec "$HDFS_CONTAINER" bash -c "
-        cat > /tmp/sample.txt <<'EOF'
-Hadoop — фреймворк для распределённой обработки больших данных.
-Он работает на кластере из обычных серверов.
-MapReduce делит задачу на маленькие подзадачи.
-Каждый узел обрабатывает свою часть данных.
-Результаты объединяются на этапе Reduce.
-HDFS обеспечивает надёжное хранение с репликацией.
-YARN управляет ресурсами кластера.
-Hadoop широко используется в индустрии.
-Это учебный пример — LineCount считает строки.
-Привет, Hadoop!
-EOF"
-    docker exec "$HDFS_CONTAINER" hdfs dfs -mkdir -p "$HDFS_INPUT"
-    docker exec "$HDFS_CONTAINER" hdfs dfs -put -f /tmp/sample.txt "$HDFS_INPUT/"
+if ! docker exec "$HDFS_CONTAINER" hdfs dfs -test -d "$HDFS_INPUT" 2>/dev/null; then
+    echo "ERROR: input directory ${HDFS_INPUT} does not exist in HDFS." >&2
+    echo "Upload your data first, e.g.:" >&2
+    echo "  docker exec namenode hdfs dfs -mkdir -p ${HDFS_INPUT}" >&2
+    echo "  docker exec namenode hdfs dfs -put <local_file> ${HDFS_INPUT}/" >&2
+    exit 1
 fi
 
-# ---------- 5. Запускаем MapReduce-задачу ----------
+# Remove previous output if exists
+docker exec "$HDFS_CONTAINER" hdfs dfs -rm -r -f "$HDFS_OUTPUT" 2>/dev/null || true
+
+# ---------- 5. Run MapReduce job ----------
 echo ""
-echo "=== Запускаю LineCount MapReduce на YARN ==="
-echo "    Вход:  ${HDFS_INPUT}"
-echo "    Выход: ${HDFS_OUTPUT}"
+echo "=== Running LineCount MapReduce on YARN ==="
+echo "    Input:  ${HDFS_INPUT}"
+echo "    Output: ${HDFS_OUTPUT}"
 echo ""
 
 # Main-Class is already set in the JAR manifest (pom.xml maven-jar-plugin),
@@ -93,9 +78,9 @@ docker exec "$SUBMIT_CONTAINER" \
     -Dmapreduce.job.ubertask.enable=true \
     "$HDFS_INPUT" "$HDFS_OUTPUT"
 
-# ---------- 6. Показываем результат ----------
+# ---------- 6. Show results ----------
 echo ""
-echo "=== Результат ==="
+echo "=== Result ==="
 docker exec "$HDFS_CONTAINER" hdfs dfs -cat "${HDFS_OUTPUT}/part-r-00000"
 echo ""
-echo "=== Готово! ==="
+echo "=== Done! ==="
