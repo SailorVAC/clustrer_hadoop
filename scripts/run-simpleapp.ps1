@@ -97,7 +97,8 @@ Write-Host "    Input:  $InputPath"
 Write-Host "    Output: $OutputPath"
 Write-Host ""
 
-docker exec $SubmitContainer hadoop jar "/tmp/$JarName" by.bsu.rct.bigdata.LineCountDriverMR $InputPath $OutputPath
+$cmd = "hadoop jar /tmp/$JarName by.bsu.rct.bigdata.LineCountDriverMR $InputPath $OutputPath"
+docker exec $SubmitContainer bash -c $cmd
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: MapReduce job failed" -ForegroundColor Red
