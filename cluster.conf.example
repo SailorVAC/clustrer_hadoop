@@ -1,42 +1,20 @@
 # cluster.conf — Конфигурация Hadoop-кластера
 #
-# Скопируйте этот файл в cluster.conf и впишите реальные IP.
-# Затем запустите:
-#   .\scripts\setup-cluster.ps1        (PowerShell)
-#   bash scripts/setup-cluster.sh      (Bash)
+# 1. Скопируйте в cluster.conf:     copy cluster.conf.example cluster.conf
+# 2. Впишите реальные IP
+# 3. Запустите:                      start.bat
 #
-# Скрипт прочитает cluster.conf и сгенерирует файлы в generated/
-# без интерактивных вопросов.
+# Формат:  IP_АДРЕС  роль1,роль2,...
 #
-# ───────────────────────────────────────────────────────
-#  Формат каждой строки:
-#    IP_АДРЕС  роль1,роль2,...
-#
-#  Доступные роли:
-#    namenode            — хранение метаданных HDFS (нужен ровно 1)
-#    secondarynamenode   — чекпоинт NameNode
-#    resourcemanager     — управление YARN (нужен ровно 1)
-#    historyserver       — история MapReduce-задач
-#    datanode            — DataNode + NodeManager (минимум 1)
-#
-#  Пустые строки и строки с # игнорируются.
-# ───────────────────────────────────────────────────────
+# Роли:
+#   namenode            — метаданные HDFS (ровно 1)
+#   secondarynamenode   — чекпоинт NameNode
+#   resourcemanager     — YARN (ровно 1)
+#   historyserver       — история задач
+#   datanode            — хранение данных + выполнение задач (мин. 1)
 
-# === Пример 1: Стандартная конфигурация (3 машины) ===
+# === Впишите свои IP ===
 
 192.168.1.10  namenode,secondarynamenode,resourcemanager,historyserver
 192.168.1.11  datanode
 192.168.1.12  datanode
-
-# === Пример 2: YARN на отдельном (4 машины) ===
-# 192.168.1.10  namenode,secondarynamenode,historyserver
-# 192.168.1.20  resourcemanager
-# 192.168.1.11  datanode
-# 192.168.1.12  datanode
-
-# === Пример 3: Всё раздельно (5 машин) ===
-# 192.168.1.10  namenode,secondarynamenode
-# 192.168.1.20  resourcemanager
-# 192.168.1.30  historyserver
-# 192.168.1.11  datanode
-# 192.168.1.12  datanode

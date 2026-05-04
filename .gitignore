@@ -1,6 +1,7 @@
 # Локальные настройки кластера
 .env
 cluster.conf
+docker-compose.generated.yml
 
 # Docker-логи/данные, если кто-то решит сделать bind-mount
 data/

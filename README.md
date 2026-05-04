@@ -13,23 +13,16 @@
 
 1. [Архитектура](#архитектура)
 2. [Требования](#требования)
-3. [Гибкая настройка кластера (setup-cluster)](#гибкая-настройка-кластера-setup-cluster)
-4. [Быстрый старт (ручная настройка)](#быстрый-старт-ручная-настройка)
-   - [Шаг 1. Клонирование](#шаг-1-клонирование-репозитория)
-   - [Шаг 2. IP-адреса](#шаг-2-узнать-ip-всех-3-ноутбуков)
-   - [Шаг 3. Файл .env](#шаг-3-создать-env-на-каждом-ноуте)
-   - [Шаг 4. Запуск мастера](#шаг-4-запуск-мастера)
-   - [Шаг 5. Запуск воркеров](#шаг-5-запуск-воркеров)
-   - [Шаг 6. Проверка кластера](#шаг-6-проверка-кластера)
+3. [Быстрый старт (3 шага)](#быстрый-старт-3-шага)
+4. [Остановка кластера](#остановка-кластера)
 5. [Запуск SimpleApp (LineCount)](#запуск-simpleapp-linecount)
-   - [Автоматический запуск](#автоматический-запуск)
-   - [Ручной запуск (пошагово)](#ручной-запуск-пошагово)
-   - [Свой входной файл](#свой-входной-файл)
-6. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
-7. [Остановка кластера](#остановка-кластера)
-8. [Веб-интерфейсы](#веб-интерфейсы)
-9. [Структура проекта](#структура-проекта)
-10. [Решение проблем](#решение-проблем)
+6. [Настройка ролей](#настройка-ролей)
+7. [Генератор конфигов (setup-cluster)](#генератор-конфигов-setup-cluster)
+8. [Ручная настройка (без скрипта)](#ручная-настройка-без-скрипта)
+9. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
+10. [Веб-интерфейсы](#веб-интерфейсы)
+11. [Структура проекта](#структура-проекта)
+12. [Решение проблем](#решение-проблем)
 
 ---
 
@@ -80,149 +73,138 @@
 
 ---
 
-## Гибкая настройка кластера (setup-cluster)
+## Быстрый старт (3 шага)
 
-Интерактивный скрипт, который позволяет **выбрать роли для каждой машины** и автоматически генерирует нужные `docker-compose.yml` и `.env` файлы.
+### Шаг 1. Клонирование
 
-### Возможности
+На **каждом** ноутбуке:
 
-- Любое количество машин (от 2 до 20)
-- Назначение ролей на любую машину:
-  - **NameNode** — хранение метаданных HDFS
-  - **SecondaryNameNode** — чекпоинт NameNode
-  - **ResourceManager** — управление YARN
-  - **HistoryServer** — история MapReduce-задач
-  - **DataNode + NodeManager** — хранение данных + выполнение задач
-- Роли можно комбинировать (например, NameNode + ResourceManager на одной машине, или вынести HistoryServer/YARN на отдельную)
-- Автоматический расчёт портов DataNode (worker1 → 9866, worker2 → 9876, ...)
-- Генерация отдельного `docker-compose.yml` и `.env` для каждой машины
+```powershell
+git clone https://github.com/SailorVAC/clustrer_hadoop.git
+cd clustrer_hadoop
+```
 
-### Использование
+### Шаг 2. Конфигурация
 
-#### Способ 1: Через конфиг-файл (рекомендуется)
-
-Скопируйте шаблон и впишите свои IP:
+На **одном** ноуте создайте `cluster.conf`:
 
 ```powershell
 copy cluster.conf.example cluster.conf
 notepad cluster.conf
 ```
 
-Формат `cluster.conf`:
+Впишите реальные IP ваших ноутбуков (`ipconfig`):
+
 ```ini
-# IP_АДРЕС  роль1,роль2,...
 192.168.1.10  namenode,secondarynamenode,resourcemanager,historyserver
 192.168.1.11  datanode
 192.168.1.12  datanode
 ```
 
-Доступные роли: `namenode`, `secondarynamenode`, `resourcemanager`, `historyserver`, `datanode`.
+Роли можно распределять гибко (подробнее — [Настройка ролей](#настройка-ролей)).
 
-Затем запустите скрипт — он прочитает `cluster.conf` автоматически:
+Скопируйте `cluster.conf` на **все** остальные ноуты (через USB, по сети, или просто создайте одинаковый файл).
 
-```powershell
-.\scripts\setup-cluster.ps1                    # PowerShell
-bash scripts/setup-cluster.sh                  # Bash
-```
+### Шаг 3. Запуск
 
-Можно указать другой файл:
-```powershell
-.\scripts\setup-cluster.ps1 -Config my.conf   # PowerShell
-bash scripts/setup-cluster.sh -c my.conf       # Bash
-```
-
-#### Способ 2: Интерактивный режим
-
-Если `cluster.conf` нет, скрипт задаст вопросы интерактивно:
-
-```
->>> Шаг 1: Количество машин
-Сколько машин в кластере? [3]: 4
-
-  --- Машина 1 из 4 ---
-    IP-адрес: 192.168.1.10
-    Роли (номера через запятую): 1,2     → NameNode, SNN
-
-  --- Машина 2 из 4 ---
-    IP-адрес: 192.168.1.20
-    Роли: 3,4                            → ResourceManager, HistoryServer
-
-  --- Машина 3 из 4 ---
-    IP-адрес: 192.168.1.11
-    Роли: 5                              → DataNode + NodeManager
-
-  --- Машина 4 из 4 ---
-    IP-адрес: 192.168.1.12
-    Роли: 5                              → DataNode + NodeManager
-```
-
-Файлы появятся в папке `generated/`:
-
-```
-generated/
-├── nn-snn.yml          # docker-compose для NameNode + SNN
-├── nn-snn.env          # .env для этой машины
-├── rm-hs.yml           # docker-compose для ResourceManager + HistoryServer
-├── rm-hs.env
-├── worker1.yml         # docker-compose для воркера 1
-├── worker1.env
-├── worker2.yml         # docker-compose для воркера 2
-└── worker2.env
-```
-
-### Развёртывание
-
-На **каждой** машине должен быть клонирован репозиторий. Скопируйте нужные файлы и запускайте **в указанном порядке**:
+На **каждом** ноуте — один и тот же скрипт:
 
 ```powershell
-# 1. Машина с NameNode (первой!)
-copy generated\nn-snn.env .env
-docker compose -f generated\nn-snn.yml up -d --build
-
-# 2. Машина с ResourceManager
-copy generated\rm-hs.env .env
-docker compose -f generated\rm-hs.yml up -d --build
-
-# 3. Воркеры (в любом порядке)
-copy generated\worker1.env .env
-docker compose -f generated\worker1.yml up -d --build
+start.bat
 ```
 
-### Примеры конфигураций
+Скрипт **автоматически определяет** какая это машина по IP, генерирует нужный docker-compose и запускает контейнеры. Первый запуск долгий — скачивается образ (~700 МБ).
 
-**Стандартная (3 машины):**
-| Машина | Роли |
-|--------|------|
-| 1 | NameNode, SecondaryNameNode, ResourceManager, HistoryServer |
-| 2 | DataNode + NodeManager |
-| 3 | DataNode + NodeManager |
+**Порядок:** сначала мастер (NameNode), потом воркеры. Но даже если запустить одновременно — воркеры подождут мастера автоматически.
 
-**Раздельная (5 машин):**
-| Машина | Роли |
-|--------|------|
-| 1 | NameNode, SecondaryNameNode |
-| 2 | ResourceManager |
-| 3 | HistoryServer |
-| 4 | DataNode + NodeManager |
-| 5 | DataNode + NodeManager |
+**Проверка** (на мастере, через ~30 сек после запуска):
 
-**С YARN на отдельном (4 машины):**
-| Машина | Роли |
-|--------|------|
-| 1 | NameNode, SecondaryNameNode, HistoryServer |
-| 2 | ResourceManager |
-| 3 | DataNode + NodeManager |
-| 4 | DataNode + NodeManager |
+```powershell
+docker exec namenode hdfs dfsadmin -report
+docker exec resourcemanager yarn node -list
+```
+
+**Кластер готов!**
 
 ---
 
-## Быстрый старт (ручная настройка)
+## Остановка кластера
 
-> **Рекомендация:** для нового кластера используйте [setup-cluster](#гибкая-настройка-кластера-setup-cluster) — он сгенерирует все файлы автоматически. Раздел ниже — для ручной настройки стандартной конфигурации (3 ноута).
+На каждом ноуте:
 
-### Шаг 1. Клонирование репозитория
+```powershell
+stop.bat
+```
 
-На **каждом** из 3 ноутбуков откройте PowerShell:
+С удалением данных HDFS (полный сброс):
+```powershell
+stop.bat -v
+```
+
+---
+
+## Настройка ролей
+
+В `cluster.conf` можно назначить любые роли на любую машину:
+
+| Роль | Описание | Ограничение |
+|------|----------|-------------|
+| `namenode` | Метаданные HDFS | ровно 1 |
+| `secondarynamenode` | Чекпоинт NameNode | — |
+| `resourcemanager` | Управление YARN | ровно 1 |
+| `historyserver` | История MapReduce-задач | — |
+| `datanode` | Хранение данных + выполнение задач | минимум 1 |
+
+**Примеры:**
+
+Стандартная (3 машины):
+```ini
+192.168.1.10  namenode,secondarynamenode,resourcemanager,historyserver
+192.168.1.11  datanode
+192.168.1.12  datanode
+```
+
+YARN на отдельном (4 машины):
+```ini
+192.168.1.10  namenode,secondarynamenode,historyserver
+192.168.1.20  resourcemanager
+192.168.1.11  datanode
+192.168.1.12  datanode
+```
+
+Всё раздельно (5 машин):
+```ini
+192.168.1.10  namenode,secondarynamenode
+192.168.1.20  resourcemanager
+192.168.1.30  historyserver
+192.168.1.11  datanode
+192.168.1.12  datanode
+```
+
+При смене сети — отредактируйте IP в `cluster.conf` и перезапустите `start.bat`.
+
+---
+
+## Генератор конфигов (setup-cluster)
+
+Если нужно сгенерировать compose-файлы **без запуска** (например, для переноса на другие машины):
+
+```powershell
+.\scripts\setup-cluster.ps1        # PowerShell
+bash scripts/setup-cluster.sh      # Bash
+```
+
+Скрипт читает `cluster.conf` (или спрашивает интерактивно, если файла нет) и создаёт файлы в `generated/`.
+
+---
+
+## Ручная настройка (без скрипта)
+
+> Используйте `start.bat` — он всё делает автоматически. Раздел ниже — если хотите настроить вручную.
+
+### Клонирование
+
+На **каждом** из 3 ноутбуков:
 
 ```powershell
 git clone https://github.com/SailorVAC/clustrer_hadoop.git
@@ -485,27 +467,6 @@ docker compose -f docker-compose.local.yml down -v
 
 ---
 
-## Остановка кластера
-
-На каждом ноуте:
-
-```powershell
-# На мастере:
-docker compose -f docker-compose.master.yml down
-
-# На каждом воркере:
-docker compose -f docker-compose.worker.yml down
-```
-
-Чтобы также удалить данные HDFS (полный сброс):
-
-```powershell
-docker compose -f docker-compose.master.yml down -v    # на мастере
-docker compose -f docker-compose.worker.yml down -v    # на воркерах
-```
-
----
-
 ## Веб-интерфейсы
 
 | URL | Описание |
@@ -523,12 +484,15 @@ docker compose -f docker-compose.worker.yml down -v    # на воркерах
 
 ```
 clustrer_hadoop/
+├── start.bat                    # Запуск кластера (на каждом ноуте)
+├── stop.bat                     # Остановка кластера
+├── cluster.conf.example         # Шаблон конфигурации → скопировать в cluster.conf
+│
 ├── Dockerfile                   # Единый образ Hadoop для всех ролей
-├── docker-compose.master.yml    # Compose для мастер-ноута
-├── docker-compose.worker.yml    # Compose для воркер-ноута
+├── docker-compose.master.yml    # Compose для ручной настройки (мастер)
+├── docker-compose.worker.yml    # Compose для ручной настройки (воркер)
 ├── docker-compose.local.yml     # All-in-one для теста на 1 машине
-├── .env.example                 # Шаблон конфигурации (скопировать в .env)
-├── cluster.conf.example         # Шаблон топологии кластера
+├── .env.example                 # Шаблон .env для ручной настройки
 │
 ├── app/
 │   └── SimpleApp/               # MapReduce-приложение LineCount
@@ -543,17 +507,15 @@ clustrer_hadoop/
 │   ├── hadoop-env.sh
 │   └── workers
 │
-├── generated/                   # Создаётся setup-cluster (в .gitignore)
-│   ├── <node>.yml              # docker-compose для каждой машины
-│   └── <node>.env              # .env для каждой машины
-│
 └── scripts/
     ├── entrypoint.sh            # Стартовый скрипт контейнера (выбор роли)
-    ├── setup-cluster.ps1        # Мастер настройки кластера (PowerShell)
-    ├── setup-cluster.sh         # Мастер настройки кластера (Bash)
-    ├── build-app.ps1            # Сборка JAR через Maven в Docker (PowerShell)
+    ├── start.ps1                # Логика запуска (вызывается из start.bat)
+    ├── stop.ps1                 # Логика остановки
+    ├── setup-cluster.ps1        # Генератор конфигов (PowerShell)
+    ├── setup-cluster.sh         # Генератор конфигов (Bash)
+    ├── build-app.ps1            # Сборка JAR через Maven в Docker
     ├── build-app.sh             # Сборка JAR (Bash)
-    ├── run-simpleapp.ps1        # Полный цикл: сборка + запуск MR (PowerShell)
+    ├── run-simpleapp.ps1        # Полный цикл: сборка + запуск MR
     └── run-simpleapp.sh         # Полный цикл (Bash)
 ```
 
