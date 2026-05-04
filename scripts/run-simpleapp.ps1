@@ -84,7 +84,13 @@ Write-Host ""
 # Main-Class is already set in the JAR manifest (pom.xml maven-jar-plugin),
 # so do NOT pass the class name here — otherwise hadoop jar treats it as
 # an extra argument and the app receives 3 args instead of 2.
-docker exec $SubmitContainer hadoop jar "/tmp/$JarName" $InputPath $OutputPath
+#
+# -Ddfs.client.use.datanode.hostname=true forces the HDFS client to connect
+# to DataNodes via hostname (worker1/worker2 -> LAN IP via extra_hosts)
+# instead of the NameNode-recorded IP (Docker bridge gateway 172.18.0.1).
+docker exec $SubmitContainer hadoop jar "/tmp/$JarName" `
+    "-Ddfs.client.use.datanode.hostname=true" `
+    $InputPath $OutputPath
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: MapReduce job failed" -ForegroundColor Red
