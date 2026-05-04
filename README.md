@@ -207,6 +207,84 @@ NodeManager в одном процессе), чтобы Docker DNS на bridge-�
 крутятся в **разных** контейнерах — там конфликта DNS нет, потому что
 hostname'ы резолвятся через `extra_hosts` в LAN-IP реальных машин.
 
+## Запуск SimpleApp (LineCount MapReduce)
+
+В репозитории есть учебное MapReduce-приложение **SimpleApp** — считает
+количество строк во входном файле. Исходники лежат в `app/SimpleApp/`.
+
+### Быстрый запуск (автоматический)
+
+Скрипт `run-simpleapp.sh` сам соберёт JAR, положит тестовый файл в HDFS
+и запустит задачу на YARN:
+
+```powershell
+# На мастер-ноуте (или на единственном ноуте в local-режиме),
+# из корня репозитория:
+bash scripts/run-simpleapp.sh
+```
+
+На выходе увидишь что-то вроде:
+
+```
+Number of lines:	10
+```
+
+### Пошаговый запуск (ручной)
+
+#### 1. Сборка JAR
+
+Maven/JDK на ноуте не нужны — сборка идёт внутри Docker-контейнера:
+
+```powershell
+bash scripts/build-app.sh
+```
+
+JAR появится в `app/SimpleApp/target/SimpleApp-1.0-SNAPSHOT.jar`.
+
+#### 2. Копирование JAR в контейнер
+
+```powershell
+docker cp app/SimpleApp/target/SimpleApp-1.0-SNAPSHOT.jar resourcemanager:/tmp/
+```
+
+#### 3. Подготовка входных данных в HDFS
+
+```powershell
+# Создаём файл и кладём в HDFS
+docker exec namenode bash -c "echo 'строка 1
+строка 2
+строка 3' > /tmp/input.txt"
+docker exec namenode hdfs dfs -mkdir -p /simpleapp/input
+docker exec namenode hdfs dfs -put -f /tmp/input.txt /simpleapp/input/
+```
+
+#### 4. Запуск MapReduce-задачи
+
+```powershell
+docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar ^
+    by.bsu.rct.bigdata.LineCountDriverMR /simpleapp/input /simpleapp/output
+```
+
+#### 5. Просмотр результата
+
+```powershell
+docker exec namenode hdfs dfs -cat /simpleapp/output/part-r-00000
+```
+
+> **Примечание:** перед повторным запуском удали выходную директорию:
+> `docker exec namenode hdfs dfs -rm -r /simpleapp/output`
+
+### Свой входной файл
+
+Чтобы посчитать строки в своём файле:
+
+```powershell
+docker cp my-file.txt namenode:/tmp/my-file.txt
+docker exec namenode hdfs dfs -mkdir -p /mydata/input
+docker exec namenode hdfs dfs -put /tmp/my-file.txt /mydata/input/
+bash scripts/run-simpleapp.sh /mydata/input /mydata/output
+```
+
 ## Структура репозитория
 
 ```
@@ -216,6 +294,10 @@ hostname'ы резолвятся через `extra_hosts` в LAN-IP реальн
 ├── docker-compose.worker.yml
 ├── docker-compose.local.yml # all-in-one для теста на 1 машине
 ├── .env.example             # шаблон конфигурации сети
+├── app/
+│   └── SimpleApp/           # учебное MapReduce-приложение (LineCount)
+│       ├── pom.xml
+│       └── src/
 ├── config/                  # Hadoop конфиги, копируются в /opt/hadoop/etc/hadoop
 │   ├── core-site.xml
 │   ├── hdfs-site.xml
@@ -224,7 +306,9 @@ hostname'ы резолвятся через `extra_hosts` в LAN-IP реальн
 │   ├── hadoop-env.sh
 │   └── workers
 └── scripts/
-    └── entrypoint.sh        # выбирает сервис по $HADOOP_ROLE
+    ├── entrypoint.sh        # выбирает сервис по $HADOOP_ROLE
+    ├── build-app.sh         # сборка SimpleApp JAR (Maven в Docker)
+    └── run-simpleapp.sh     # сборка + загрузка данных + запуск MR job
 ```
 
 ## Решение проблем
