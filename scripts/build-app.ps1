@@ -8,7 +8,7 @@
 # Maven runs inside maven:3.9-eclipse-temurin-11 container,
 # so you don't need Maven/JDK installed on the host.
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $AppDir   = Join-Path $RepoRoot "app\SimpleApp"
