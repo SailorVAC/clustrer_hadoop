@@ -5,6 +5,9 @@
 data/
 logs/
 
+# Maven build artifacts
+app/*/target/
+
 # OS / IDE
 .DS_Store
 Thumbs.db
