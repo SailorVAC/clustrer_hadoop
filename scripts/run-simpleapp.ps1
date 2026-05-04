@@ -1,11 +1,11 @@
-# Сборка SimpleApp, загрузка тестового файла в HDFS и запуск MapReduce-job.
+# Build SimpleApp, upload test data to HDFS and run the MapReduce job.
 #
-# Использование (из корня репозитория):
-#   .\scripts\run-simpleapp.ps1                                  # smoke-тест
+# Usage (from repo root):
+#   .\scripts\run-simpleapp.ps1                                  # smoke test
 #   .\scripts\run-simpleapp.ps1 -InputPath /demo/in -OutputPath /demo/out
 #
-# Для multi-host кластера: скрипт запускается на мастер-ноуте, где
-# доступны контейнеры namenode и resourcemanager.
+# For multi-host cluster: run this on the master node where
+# namenode and resourcemanager containers are available.
 
 param(
     [string]$InputPath  = "/simpleapp/input",
@@ -18,13 +18,13 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $JarName  = "SimpleApp-1.0-SNAPSHOT.jar"
 $JarPath  = Join-Path $RepoRoot "app\SimpleApp\target\$JarName"
 
-# ---------- 1. Сборка, если JAR ещё не собран ----------
+# ---------- 1. Build JAR if not yet built ----------
 if (-not (Test-Path $JarPath)) {
-    Write-Host "=== JAR не найден, запускаю сборку ==="
+    Write-Host "=== JAR not found, starting build ==="
     & (Join-Path $RepoRoot "scripts\build-app.ps1")
 }
 
-# ---------- 2. Определяем контейнер для запуска ----------
+# ---------- 2. Find running container ----------
 $SubmitContainer = $null
 foreach ($c in @("resourcemanager", "namenode")) {
     $running = docker inspect --format '{{.State.Running}}' $c 2>$null
@@ -34,57 +34,53 @@ foreach ($c in @("resourcemanager", "namenode")) {
     }
 }
 if (-not $SubmitContainer) {
-    Write-Error "Ошибка: не найден запущенный контейнер namenode или resourcemanager.`nУбедитесь, что кластер поднят (docker compose ... up -d)."
+    Write-Error "Error: no running namenode or resourcemanager container found.`nMake sure the cluster is up (docker compose ... up -d)."
     exit 1
 }
-Write-Host "=== Используем контейнер: $SubmitContainer ==="
+Write-Host "=== Using container: $SubmitContainer ==="
 
-# Определяем контейнер с HDFS-клиентом (namenode)
+# Find HDFS client container (namenode)
 $HdfsContainer = "namenode"
 $nnRunning = docker inspect --format '{{.State.Running}}' $HdfsContainer 2>$null
 if ($nnRunning -ne "true") {
     $HdfsContainer = $SubmitContainer
 }
 
-# ---------- 3. Копируем JAR в контейнер ----------
-Write-Host "=== Копирую JAR в контейнер ==="
+# ---------- 3. Copy JAR into container ----------
+Write-Host "=== Copying JAR into container ==="
 docker cp $JarPath "${SubmitContainer}:/tmp/${JarName}"
 
-# ---------- 4. Готовим входные данные в HDFS ----------
-Write-Host "=== Подготовка HDFS (input=$InputPath, output=$OutputPath) ==="
+# ---------- 4. Prepare input data in HDFS ----------
+Write-Host "=== Preparing HDFS (input=$InputPath, output=$OutputPath) ==="
 
-# Удалим предыдущий output, если есть
+# Remove previous output if exists
 docker exec $HdfsContainer hdfs dfs -rm -r -f $OutputPath 2>$null
 
-# Если входная директория пуста — кладём тестовый файл
+# If input directory is empty, create a sample file
 $existing = docker exec $HdfsContainer hdfs dfs -ls $InputPath 2>&1
 if ($LASTEXITCODE -ne 0 -or $existing -match "No such file") {
-    Write-Host "=== Создаю тестовый файл в HDFS ==="
-    $sampleText = @"
-Hadoop — фреймворк для распределённой обработки больших данных.
-Он работает на кластере из обычных серверов.
-MapReduce делит задачу на маленькие подзадачи.
-Каждый узел обрабатывает свою часть данных.
-Результаты объединяются на этапе Reduce.
-HDFS обеспечивает надёжное хранение с репликацией.
-YARN управляет ресурсами кластера.
-Hadoop широко используется в индустрии.
-Это учебный пример — LineCount считает строки.
-Привет, Hadoop!
-"@
-    # Записываем файл через docker exec
+    Write-Host "=== Creating sample file in HDFS ==="
     docker exec $HdfsContainer bash -c "cat > /tmp/sample.txt << 'ENDOFFILE'
-$sampleText
+Hadoop is a framework for distributed processing of large data sets.
+It runs on a cluster of commodity servers.
+MapReduce splits a task into small subtasks.
+Each node processes its own portion of data.
+Results are combined during the Reduce phase.
+HDFS provides reliable storage with replication.
+YARN manages cluster resources.
+Hadoop is widely used in industry.
+This is a demo - LineCount counts lines.
+Hello, Hadoop!
 ENDOFFILE"
     docker exec $HdfsContainer hdfs dfs -mkdir -p $InputPath
     docker exec $HdfsContainer hdfs dfs -put -f /tmp/sample.txt "$InputPath/"
 }
 
-# ---------- 5. Запускаем MapReduce-задачу ----------
+# ---------- 5. Run MapReduce job ----------
 Write-Host ""
-Write-Host "=== Запускаю LineCount MapReduce на YARN ==="
-Write-Host "    Вход:  $InputPath"
-Write-Host "    Выход: $OutputPath"
+Write-Host "=== Running LineCount MapReduce on YARN ==="
+Write-Host "    Input:  $InputPath"
+Write-Host "    Output: $OutputPath"
 Write-Host ""
 
 docker exec $SubmitContainer `
@@ -93,13 +89,13 @@ docker exec $SubmitContainer `
     $InputPath $OutputPath
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "MapReduce-задача завершилась с ошибкой"
+    Write-Error "MapReduce job failed"
     exit 1
 }
 
-# ---------- 6. Показываем результат ----------
+# ---------- 6. Show results ----------
 Write-Host ""
-Write-Host "=== Результат ==="
+Write-Host "=== Result ==="
 docker exec $HdfsContainer hdfs dfs -cat "$OutputPath/part-r-00000"
 Write-Host ""
-Write-Host "=== Готово! ==="
+Write-Host "=== Done! ==="
