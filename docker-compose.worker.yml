@@ -65,7 +65,11 @@ services:
       - "8041:8041"   # NodeManager RPC
       - "8042:8042"   # NodeManager Web UI
       - "13562:13562" # MapReduce shuffle
-      - "32000-32100:32000-32100"  # YARN AM port range
+      # YARN AM umbilical RPC. Должно совпадать с диапазоном
+      # yarn.app.mapreduce.am.job.client.port-range в config/yarn-site.xml.
+      # Явные порты вместо range'а — обход бага DD на Windows.
+      - "32000:32000"
+      - "32001:32001"
     volumes:
       - hadoop_logs:/opt/hadoop/logs
     extra_hosts: *extra_hosts

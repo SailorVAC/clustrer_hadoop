@@ -74,10 +74,13 @@
         <value>http://historyserver:19888/jobhistory/logs</value>
     </property>
 
-    <!-- Ограничиваем диапазон портов AM, чтобы их можно было пробросить из контейнера. -->
+    <!-- AM использует ровно один из этих портов для umbilical-RPC, по которому
+         таски на других воркерах его зовут. На Windows Docker Desktop большой
+         диапазон публиковать нельзя (баг port-forwarding'а), поэтому даём 2
+         порта — этого хватит, и оба явно публикуются в docker-compose.worker.yml. -->
     <property>
         <name>yarn.app.mapreduce.am.job.client.port-range</name>
-        <value>32000-32100</value>
+        <value>32000-32001</value>
     </property>
 
     <property>
