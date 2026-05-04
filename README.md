@@ -214,13 +214,13 @@ hostname'ы резолвятся через `extra_hosts` в LAN-IP реальн
 
 ### Быстрый запуск (автоматический)
 
-Скрипт `run-simpleapp.sh` сам соберёт JAR, положит тестовый файл в HDFS
+Скрипт `run-simpleapp.ps1` сам соберёт JAR, положит тестовый файл в HDFS
 и запустит задачу на YARN:
 
 ```powershell
 # На мастер-ноуте (или на единственном ноуте в local-режиме),
-# из корня репозитория:
-bash scripts/run-simpleapp.sh
+# из корня репозитория в PowerShell:
+.\scripts\run-simpleapp.ps1
 ```
 
 На выходе увидишь что-то вроде:
@@ -236,7 +236,7 @@ Number of lines:	10
 Maven/JDK на ноуте не нужны — сборка идёт внутри Docker-контейнера:
 
 ```powershell
-bash scripts/build-app.sh
+.\scripts\build-app.ps1
 ```
 
 JAR появится в `app/SimpleApp/target/SimpleApp-1.0-SNAPSHOT.jar`.
@@ -261,7 +261,7 @@ docker exec namenode hdfs dfs -put -f /tmp/input.txt /simpleapp/input/
 #### 4. Запуск MapReduce-задачи
 
 ```powershell
-docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar ^
+docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
     by.bsu.rct.bigdata.LineCountDriverMR /simpleapp/input /simpleapp/output
 ```
 
@@ -282,7 +282,7 @@ docker exec namenode hdfs dfs -cat /simpleapp/output/part-r-00000
 docker cp my-file.txt namenode:/tmp/my-file.txt
 docker exec namenode hdfs dfs -mkdir -p /mydata/input
 docker exec namenode hdfs dfs -put /tmp/my-file.txt /mydata/input/
-bash scripts/run-simpleapp.sh /mydata/input /mydata/output
+.\scripts\run-simpleapp.ps1 -InputPath /mydata/input -OutputPath /mydata/output
 ```
 
 ## Структура репозитория
@@ -307,8 +307,10 @@ bash scripts/run-simpleapp.sh /mydata/input /mydata/output
 │   └── workers
 └── scripts/
     ├── entrypoint.sh        # выбирает сервис по $HADOOP_ROLE
-    ├── build-app.sh         # сборка SimpleApp JAR (Maven в Docker)
-    └── run-simpleapp.sh     # сборка + загрузка данных + запуск MR job
+    ├── build-app.ps1        # сборка SimpleApp JAR (Maven в Docker) — PowerShell
+    ├── build-app.sh         # то же для Linux / Git Bash
+    ├── run-simpleapp.ps1    # сборка + загрузка данных + запуск MR job — PowerShell
+    └── run-simpleapp.sh     # то же для Linux / Git Bash
 ```
 
 ## Решение проблем
