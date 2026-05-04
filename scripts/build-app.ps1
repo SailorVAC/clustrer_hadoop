@@ -1,12 +1,12 @@
-# Сборка SimpleApp JAR с помощью Maven (в Docker-контейнере).
+# Build SimpleApp JAR using Maven (inside a Docker container).
 #
-# Результат: app\SimpleApp\target\SimpleApp-1.0-SNAPSHOT.jar
+# Result: app\SimpleApp\target\SimpleApp-1.0-SNAPSHOT.jar
 #
-# Использование (из корня репозитория):
+# Usage (from repo root):
 #   .\scripts\build-app.ps1
 #
-# Maven запускается внутри контейнера maven:3.9-eclipse-temurin-11,
-# поэтому на хост-машине Maven/JDK устанавливать не нужно.
+# Maven runs inside maven:3.9-eclipse-temurin-11 container,
+# so you don't need Maven/JDK installed on the host.
 
 $ErrorActionPreference = "Stop"
 
@@ -14,14 +14,12 @@ $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $AppDir   = Join-Path $RepoRoot "app\SimpleApp"
 
 if (-not (Test-Path (Join-Path $AppDir "pom.xml"))) {
-    Write-Error "Ошибка: не найден $AppDir\pom.xml"
+    Write-Error "Error: pom.xml not found in $AppDir"
     exit 1
 }
 
-Write-Host "=== Сборка SimpleApp (Maven в Docker) ==="
+Write-Host "=== Building SimpleApp (Maven in Docker) ==="
 
-# Преобразуем путь в формат для Docker Desktop на Windows
-# Docker Desktop понимает как Windows-пути, так и /c/Users/... формат
 docker run --rm `
     -v "${AppDir}:/app" `
     -w /app `
@@ -30,8 +28,8 @@ docker run --rm `
 
 $Jar = Join-Path $AppDir "target\SimpleApp-1.0-SNAPSHOT.jar"
 if (Test-Path $Jar) {
-    Write-Host "=== Готово: $Jar ==="
+    Write-Host "=== Done: $Jar ==="
 } else {
-    Write-Error "Ошибка: JAR не найден после сборки"
+    Write-Error "Error: JAR not found after build"
     exit 1
 }
