@@ -71,13 +71,8 @@ echo ""
 # Main-Class is already set in the JAR manifest (pom.xml maven-jar-plugin),
 # so do NOT pass the class name here — otherwise hadoop jar treats it as
 # an extra argument and the app receives 3 args instead of 2.
-# Uber mode: map+reduce run inside the AM JVM (avoids cross-host Docker
-# networking issues where internal bridge IPs are unreachable).
 docker exec "$SUBMIT_CONTAINER" \
     hadoop jar "/tmp/${JAR_NAME}" \
-    -Dmapreduce.job.ubertask.enable=true \
-    -Dmapreduce.job.ubertask.maxmaps=20 \
-    -Dmapreduce.job.ubertask.maxbytes=536870912 \
     "$HDFS_INPUT" "$HDFS_OUTPUT"
 
 # ---------- 6. Show results ----------

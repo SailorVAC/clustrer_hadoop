@@ -252,15 +252,12 @@ docker exec namenode hdfs dfs -put /tmp/data.txt /user/demo/input/
 
 ```powershell
 docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
-    "-Dmapreduce.job.ubertask.enable=true" `
-    "-Dmapreduce.job.ubertask.maxmaps=20" `
-    "-Dmapreduce.job.ubertask.maxbytes=536870912" `
     /user/demo/input /user/demo/output
 ```
 
-> **Важно:**
-> - Имя main-класса указывать **не нужно** — оно прописано в манифесте JAR.
-> - Параметры `ubertask` обязательны для multi-host Docker-кластера (см. [Примечание об uber mode](#примечание-об-uber-mode)).
+> **Важно:** имя main-класса указывать **не нужно** — оно прописано в манифесте JAR.
+
+Map- и reduce-задачи распределяются по NodeManager'ам на разных воркерах — полноценное распределённое выполнение.
 
 #### 5. Просмотр результата
 
@@ -282,11 +279,20 @@ docker exec namenode hdfs dfs -put /tmp/my-file.txt /mydata/input/
 .\scripts\run-simpleapp.ps1 -InputPath /mydata/input -OutputPath /mydata/output
 ```
 
-### Примечание об uber mode
+### Как работает межузловая коммуникация
 
-В multi-host Docker-кластере каждый ноутбук имеет свою внутреннюю Docker bridge-сеть с IP-адресами вида `172.18.x.x`. Задачи на одном ноуте не могут напрямую подключиться к контейнерам на другом ноуте по этим внутренним IP.
+В multi-host Docker-кластере каждый ноутбук имеет свою Docker bridge-сеть с
+внутренними IP (172.18.x.x). Контейнеры на разных ноутах не видят друг друга
+по этим IP.
 
-**Uber mode** решает эту проблему: все map- и reduce-задачи выполняются внутри одного контейнера ApplicationMaster, без необходимости межузловой коммуникации. Для небольших и средних задач это оптимальный подход.
+Решение реализовано на уровне `entrypoint.sh`: при старте контейнеров DataNode и
+NodeManager скрипт удаляет из `/etc/hosts` запись Docker bridge IP для hostname
+контейнера, оставляя только запись `extra_hosts` с LAN IP. Благодаря этому
+Java-сервисы (`InetAddress.getLocalHost()`) рекламируют LAN IP ноутбука, а не
+внутренний Docker IP. Все нужные порты (8041, 9866, 13562, 32000–32001) проброшены
+через Docker, поэтому коммуникация между узлами работает через LAN.
+
+Результат: **map- и reduce-задачи выполняются распределённо на разных воркерах**.
 
 ---
 
@@ -426,17 +432,17 @@ docker exec namenode hdfs dfs -cat /path/to/file
 
 ### MapReduce-задача падает с Connection refused
 
-Ошибка `java.net.ConnectException: Connection refused` при доступе к `worker1:9866` или `worker2:32001` означает, что задачи на разных ноутах не могут связаться через внутренние Docker IP.
+Ошибка `java.net.ConnectException: Connection refused` при доступе к `worker1:9866` или `worker2:32001` означает, что Hadoop-сервисы рекламируют Docker bridge IP (172.18.x.x) вместо LAN IP.
 
-**Решение:** убедитесь, что в команде запуска включён **uber mode** (скрипт `run-simpleapp.ps1` делает это автоматически):
+**Решение:** пересоберите и перезапустите контейнеры на воркерах — `entrypoint.sh` автоматически исправляет `/etc/hosts`:
 
 ```powershell
-docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
-    "-Dmapreduce.job.ubertask.enable=true" `
-    "-Dmapreduce.job.ubertask.maxmaps=20" `
-    "-Dmapreduce.job.ubertask.maxbytes=536870912" `
-    /input /output
+# На каждом воркере:
+docker compose -f docker-compose.worker.yml down
+docker compose -f docker-compose.worker.yml up -d --build
 ```
+
+Если проблема сохраняется, проверьте что порты 9866, 13562, 32000–32001 открыты в файрволе на воркерах.
 
 ---
 

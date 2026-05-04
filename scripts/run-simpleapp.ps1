@@ -84,16 +84,7 @@ Write-Host ""
 # Main-Class is already set in the JAR manifest (pom.xml maven-jar-plugin),
 # so do NOT pass the class name here — otherwise hadoop jar treats it as
 # an extra argument and the app receives 3 args instead of 2.
-#
-# Uber mode runs map+reduce inside the ApplicationMaster JVM.
-# Required for multi-host Docker clusters where each host has its own
-# bridge network: without it, reduce tasks on host B cannot reach the AM
-# on host A via internal Docker IPs (172.18.x.x).
-docker exec $SubmitContainer hadoop jar "/tmp/$JarName" `
-    "-Dmapreduce.job.ubertask.enable=true" `
-    "-Dmapreduce.job.ubertask.maxmaps=20" `
-    "-Dmapreduce.job.ubertask.maxbytes=536870912" `
-    $InputPath $OutputPath
+docker exec $SubmitContainer hadoop jar "/tmp/$JarName" $InputPath $OutputPath
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: MapReduce job failed" -ForegroundColor Red
