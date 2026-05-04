@@ -1,100 +1,144 @@
-# clustrer_hadoop
+# 🐘 Hadoop-кластер на 3 ноутбуках
 
-Hadoop-кластер в Docker на 3 ноутбуках: **1 мастер + 2 воркера**.
+<p align="center">
+  <b>Hadoop 3.3.6</b> &nbsp;|&nbsp; HDFS + YARN + MapReduce &nbsp;|&nbsp; Docker &nbsp;|&nbsp; Windows
+</p>
 
-Стек: **Hadoop 3.3.6** (HDFS + YARN + MapReduce) на базе **OpenJDK 11**
-(`eclipse-temurin:11-jre-jammy`). Контейнеры на разных ноутбуках общаются
-друг с другом через bridge-сеть Docker, проброшенные порты и логические
-hostname'ы (`namenode`, `resourcemanager`, `historyserver`, `worker1`,
-`worker2`), которые на каждом контейнере резолвятся в LAN-IP реальных
-ноутбуков через `extra_hosts`. Никаких экспериментальных режимов Docker
-Desktop включать не нужно.
+Развёртывание распределённого Hadoop-кластера на **3 Windows-ноутбуках** с помощью Docker.
+В комплекте — учебное MapReduce-приложение **SimpleApp (LineCount)**.
 
-## Что получится
+---
+
+## Содержание
+
+1. [Архитектура](#архитектура)
+2. [Требования](#требования)
+3. [Быстрый старт](#быстрый-старт)
+   - [Шаг 1. Клонирование](#шаг-1-клонирование-репозитория)
+   - [Шаг 2. IP-адреса](#шаг-2-узнать-ip-всех-3-ноутбуков)
+   - [Шаг 3. Файл .env](#шаг-3-создать-env-на-каждом-ноуте)
+   - [Шаг 4. Запуск мастера](#шаг-4-запуск-мастера)
+   - [Шаг 5. Запуск воркеров](#шаг-5-запуск-воркеров)
+   - [Шаг 6. Проверка кластера](#шаг-6-проверка-кластера)
+4. [Запуск SimpleApp (LineCount)](#запуск-simpleapp-linecount)
+   - [Автоматический запуск](#автоматический-запуск)
+   - [Ручной запуск (пошагово)](#ручной-запуск-пошагово)
+   - [Свой входной файл](#свой-входной-файл)
+5. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
+6. [Остановка кластера](#остановка-кластера)
+7. [Веб-интерфейсы](#веб-интерфейсы)
+8. [Структура проекта](#структура-проекта)
+9. [Решение проблем](#решение-проблем)
+
+---
+
+## Архитектура
+
+```
+┌─────────────────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│        MASTER (ноут 1)      │     │  WORKER1 (ноут 2)│     │  WORKER2 (ноут 3)│
+│                             │     │                  │     │                  │
+│  ┌─────────┐ ┌────────────┐ │     │  ┌──────────┐   │     │  ┌──────────┐   │
+│  │NameNode │ │ResourceMgr │ │     │  │ DataNode │   │     │  │ DataNode │   │
+│  └─────────┘ └────────────┘ │     │  └──────────┘   │     │  └──────────┘   │
+│  ┌─────────┐ ┌────────────┐ │     │  ┌──────────┐   │     │  ┌──────────┐   │
+│  │ 2NN     │ │HistoryServ │ │     │  │NodeMgr   │   │     │  │NodeMgr   │   │
+│  └─────────┘ └────────────┘ │     │  └──────────┘   │     │  └──────────┘   │
+└──────────┬──────────────────┘     └────────┬─────────┘     └────────┬─────────┘
+           │         LAN (192.168.x.x)       │                        │
+           └─────────────────────────────────┴────────────────────────┘
+```
 
 | Ноут       | Контейнеры                                                  |
 |------------|-------------------------------------------------------------|
-| `master`   | NameNode, SecondaryNameNode, ResourceManager, HistoryServer |
-| `worker1`  | DataNode, NodeManager                                       |
-| `worker2`  | DataNode, NodeManager                                       |
+| **master** | NameNode, SecondaryNameNode, ResourceManager, HistoryServer |
+| **worker1**| DataNode, NodeManager                                       |
+| **worker2**| DataNode, NodeManager                                       |
 
-Веб-интерфейсы (открываются с любого ноута, ходить через IP мастера):
+---
 
-| URL                                | Что показывает          |
-|------------------------------------|-------------------------|
-| `http://<MASTER_IP>:9870`          | NameNode (HDFS)         |
-| `http://<MASTER_IP>:8088`          | ResourceManager (YARN)  |
-| `http://<MASTER_IP>:19888`         | JobHistory              |
-| `http://<MASTER_IP>:9868`          | SecondaryNameNode       |
-| `http://<WORKER_IP>:9864`          | DataNode на воркере     |
-| `http://<WORKER_IP>:8042`          | NodeManager на воркере  |
+## Требования
 
-## Что нужно на каждом ноуте
+| Требование | Детали |
+|-----------|--------|
+| **ОС** | Windows 10/11 на всех 3 ноутбуках |
+| **Docker** | Docker Desktop с включённым WSL2 backend |
+| **RAM** | Минимум 4 ГБ свободной памяти для Docker на каждом ноуте |
+| **Сеть** | Все 3 ноута в одной локальной сети (проверка: `ping <IP_другого_ноута>`) |
+| **Git** | Для клонирования репозитория |
 
-- Windows 10/11 + **Docker Desktop** (с включённым WSL2 backend), либо
-  любая ОС с Docker Engine ≥ 24.
-- Все 3 ноута в одной локальной сети, видят друг друга по IP
-  (проверка: `ping <IP_другого_ноута>` должен идти).
-- Открытые порты (Windows Defender / другой firewall) — см. список ниже.
-- Минимум ~4 ГБ свободной памяти под Docker.
+### Порты, которые нужно открыть в файрволе
 
-### Порты, которые надо разрешить в firewall
+| Ноут | Порты |
+|------|-------|
+| **master** | 9000, 9870, 9868, 8030–8033, 8088, 19888, 10020 |
+| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001 |
 
-- **на мастере**: 9000, 9870, 9868, 8030–8033, 8088, 19888, 10020
-- **на воркерах**: 9864, 9866, 9867, 8040, 8041, 8042, 13562, 32000–32100
+> **Совет:** на время работы можно разрешить весь трафик от подсети ноутбуков:
+> Windows Defender → Advanced settings → Inbound rules → New rule → Custom → Remote IPs.
 
-На Windows проще всего временно (на время лабораторной) разрешить весь
-трафик от подсети ноутбуков — Defender → Advanced settings → Inbound rules
-→ New rule → Custom → Remote IPs.
+---
 
-## Шаг 1. Клонирование репозитория
+## Быстрый старт
 
-На каждом из 3 ноутбуков:
+### Шаг 1. Клонирование репозитория
+
+На **каждом** из 3 ноутбуков откройте PowerShell:
 
 ```powershell
-# В PowerShell или Git Bash
 git clone https://github.com/SailorVAC/clustrer_hadoop.git
 cd clustrer_hadoop
 ```
 
-## Шаг 2. Узнать IP всех 3 ноутбуков
+### Шаг 2. Узнать IP всех 3 ноутбуков
 
-В PowerShell на каждом ноуте:
+На каждом ноуте в PowerShell:
 
 ```powershell
 ipconfig
 ```
 
-Найти IPv4-адрес сетевого адаптера, по которому ноуты в одной сети
-(обычно `192.168.x.x` или `10.x.x.x`). Запиши три адреса:
+Найдите IPv4-адрес сетевого адаптера (обычно Wi-Fi или Ethernet), по которому ноуты в одной сети. Запишите три адреса:
 
 ```
-master   = 192.168.1.10   (например)
-worker1  = 192.168.1.11
-worker2  = 192.168.1.12
+master   = 192.168.1.10   (пример)
+worker1  = 192.168.1.11   (пример)
+worker2  = 192.168.1.12   (пример)
 ```
 
-## Шаг 3. Создать `.env` на каждом ноуте
+### Шаг 3. Создать `.env` на каждом ноуте
 
-Скопируй `.env.example` → `.env` и заполни одинаковыми тремя `*_IP` на
-**всех трёх** ноутах.
+Скопируйте `.env.example` в `.env` и впишите реальные IP-адреса. **Файл `.env` одинаковый на всех ноутах**, кроме строки `NODE_NAME` на воркерах.
 
 ```powershell
 copy .env.example .env
 notepad .env
 ```
 
+**На мастере:**
 ```env
 MASTER_IP=192.168.1.10
 WORKER1_IP=192.168.1.11
 WORKER2_IP=192.168.1.12
+```
 
-# только для воркеров: на worker1-ноуте поставь worker1,
-# на worker2-ноуте — worker2
+**На worker1:**
+```env
+MASTER_IP=192.168.1.10
+WORKER1_IP=192.168.1.11
+WORKER2_IP=192.168.1.12
 NODE_NAME=worker1
 ```
 
-## Шаг 4. Запустить мастер
+**На worker2:**
+```env
+MASTER_IP=192.168.1.10
+WORKER1_IP=192.168.1.11
+WORKER2_IP=192.168.1.12
+NODE_NAME=worker2
+```
+
+### Шаг 4. Запуск мастера
 
 На **master**-ноуте:
 
@@ -102,183 +146,134 @@ NODE_NAME=worker1
 docker compose -f docker-compose.master.yml up -d --build
 ```
 
-Первый запуск долгий: качается Hadoop (~700 МБ) и собирается образ.
-Дождись, пока NameNode будет жив:
+> Первый запуск долгий — скачивается образ Hadoop (~700 МБ). Дождитесь готовности:
 
 ```powershell
 docker logs -f namenode
-# ищи строку: "NameNode RPC up at: master/...:9000"
+# Ждите строку: "NameNode RPC up at: ..."
+# Ctrl+C чтобы выйти из логов
 ```
 
-Открой `http://localhost:9870` — должна появиться NameNode UI.
+Проверьте: откройте в браузере `http://localhost:9870` — должна появиться NameNode UI.
 
-## Шаг 5. Запустить воркеры
+### Шаг 5. Запуск воркеров
 
-На **worker1**-ноуте проверь, что в `.env` стоит `NODE_NAME=worker1`,
-и запусти:
+На **worker1**-ноуте (убедитесь, что в `.env` стоит `NODE_NAME=worker1`):
 
 ```powershell
 docker compose -f docker-compose.worker.yml up -d --build
 ```
 
-Аналогично на **worker2**-ноуте (с `NODE_NAME=worker2`).
-
-Воркеры не стартуют, пока NameNode на мастере не примет соединения —
-entrypoint ждёт `master:9000`. Это нормально.
-
-## Шаг 6. Проверить, что кластер собрался
-
-С мастера:
+На **worker2**-ноуте (в `.env` должно быть `NODE_NAME=worker2`):
 
 ```powershell
+docker compose -f docker-compose.worker.yml up -d --build
+```
+
+> Воркеры ожидают подключения к NameNode — это нормально, если мастер ещё запускается.
+
+### Шаг 6. Проверка кластера
+
+С **мастер**-ноута:
+
+```powershell
+# Проверить DataNode'ы (должно быть 2 Live datanodes)
 docker exec namenode hdfs dfsadmin -report
+
+# Проверить NodeManager'ы (должно быть 2 active nodes)
 docker exec resourcemanager yarn node -list
 ```
 
-В отчёте должно быть **2 живых DataNode** (`worker1`, `worker2`) и
-**2 NodeManager** в YARN.
+Также можно проверить через веб-интерфейс:
+- `http://<MASTER_IP>:9870` → вкладка Datanodes — 2 live nodes
+- `http://<MASTER_IP>:8088` → вкладка Nodes — 2 active nodes
 
-В UI:
-- `http://<MASTER_IP>:9870/dfshealth.html#tab-datanode` — два live nodes;
-- `http://<MASTER_IP>:8088/cluster/nodes` — два active nodes.
+**Кластер развёрнут и готов к работе!**
 
-## Шаг 7. Smoke-тест — WordCount
+---
 
-```powershell
-# создаём в HDFS папку и кладём файл
-docker exec namenode bash -c "echo 'hello hadoop hello world hadoop' > /tmp/in.txt"
-docker exec namenode hdfs dfs -mkdir -p /demo/input
-docker exec namenode hdfs dfs -put /tmp/in.txt /demo/input/
+## Запуск SimpleApp (LineCount)
 
-# запускаем встроенный пример WordCount на YARN
-docker exec resourcemanager `
-  hadoop jar /opt/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.3.6.jar `
-  wordcount /demo/input /demo/output
+**SimpleApp** — учебное MapReduce-приложение, которое считает количество строк во входных файлах.
+Исходный код: `app/SimpleApp/`.
 
-# результат
-docker exec namenode hdfs dfs -cat /demo/output/part-r-00000
-```
+### Автоматический запуск
 
-Если видишь подсчёт слов — кластер реально работает (HDFS на 2-х
-воркерах, MR-job выполнился через YARN).
+Скрипт сам соберёт JAR (Maven в Docker, ничего ставить не нужно), проверит данные в HDFS и запустит задачу на YARN.
 
-## Шаг 8. Остановка
-
-Везде:
+На **мастер**-ноуте из корня репозитория:
 
 ```powershell
-docker compose -f docker-compose.master.yml down       # на мастере
-docker compose -f docker-compose.worker.yml down       # на каждом воркере
-```
-
-Чтобы дополнительно почистить данные HDFS — добавь `-v`:
-
-```powershell
-docker compose -f docker-compose.master.yml down -v
-```
-
-## Локальный smoke-тест на одном ноуте
-
-Перед развёртыванием на 3 машины можно убедиться, что образ и конфиги
-вообще валидны, на одном ноуте:
-
-```powershell
-docker compose -f docker-compose.local.yml up -d --build
-# открой http://localhost:9870 и http://localhost:8088
-# проверь, что в HDFS подключилось 2 DataNode:
-docker exec namenode hdfs dfsadmin -report
-# и в YARN — 2 NodeManager:
-docker exec resourcemanager yarn node -list -all
-# WordCount end-to-end:
-docker exec namenode bash -c "echo 'hello hadoop hello world' > /tmp/in.txt \
-    && hdfs dfs -mkdir -p /demo/input \
-    && hdfs dfs -put -f /tmp/in.txt /demo/input/"
-docker exec resourcemanager hadoop jar \
-    /opt/hadoop/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.3.6.jar \
-    wordcount /demo/input /demo/output
-docker exec namenode hdfs dfs -cat /demo/output/part-r-00000
-# уборка
-docker compose -f docker-compose.local.yml down -v
-```
-
-В local-режиме воркер — это один контейнер на роль worker (DataNode +
-NodeManager в одном процессе), чтобы Docker DNS на bridge-сети
-однозначно резолвил `worker1`/`worker2` в один IP. На проде эти роли
-крутятся в **разных** контейнерах — там конфликта DNS нет, потому что
-hostname'ы резолвятся через `extra_hosts` в LAN-IP реальных машин.
-
-## Запуск SimpleApp (LineCount MapReduce)
-
-В репозитории есть учебное MapReduce-приложение **SimpleApp** — считает
-количество строк во входном файле. Исходники лежат в `app/SimpleApp/`.
-
-### Быстрый запуск (автоматический)
-
-Скрипт `run-simpleapp.ps1` сам соберёт JAR, положит тестовый файл в HDFS
-и запустит задачу на YARN:
-
-```powershell
-# На мастер-ноуте (или на единственном ноуте в local-режиме),
-# из корня репозитория в PowerShell:
 .\scripts\run-simpleapp.ps1
 ```
 
-На выходе увидишь что-то вроде:
+По умолчанию скрипт берёт данные из `/user/demo/input` в HDFS. Результат выведет в консоль:
 
 ```
-Number of lines:	10
+=== Result ===
+Number of lines:    3500
+=== Done! ===
 ```
 
-### Пошаговый запуск (ручной)
+Можно указать свои пути:
+
+```powershell
+.\scripts\run-simpleapp.ps1 -InputPath /my/input -OutputPath /my/output
+```
+
+### Ручной запуск (пошагово)
 
 #### 1. Сборка JAR
 
-Maven/JDK на ноуте не нужны — сборка идёт внутри Docker-контейнера:
+Maven и JDK на ноут ставить **не нужно** — сборка идёт в Docker-контейнере:
 
 ```powershell
 .\scripts\build-app.ps1
 ```
 
-JAR появится в `app/SimpleApp/target/SimpleApp-1.0-SNAPSHOT.jar`.
+JAR появится в `app\SimpleApp\target\SimpleApp-1.0-SNAPSHOT.jar`.
 
 #### 2. Копирование JAR в контейнер
 
 ```powershell
-docker cp app/SimpleApp/target/SimpleApp-1.0-SNAPSHOT.jar resourcemanager:/tmp/
+docker cp app\SimpleApp\target\SimpleApp-1.0-SNAPSHOT.jar resourcemanager:/tmp/
 ```
 
-#### 3. Подготовка входных данных в HDFS
+#### 3. Загрузка данных в HDFS
 
 ```powershell
-# Создаём файл и кладём в HDFS
-docker exec namenode bash -c "echo 'строка 1
-строка 2
-строка 3' > /tmp/input.txt"
-docker exec namenode hdfs dfs -mkdir -p /simpleapp/input
-docker exec namenode hdfs dfs -put -f /tmp/input.txt /simpleapp/input/
+# Скопировать файл с ноута в контейнер, затем положить в HDFS
+docker cp data.txt namenode:/tmp/data.txt
+docker exec namenode hdfs dfs -mkdir -p /user/demo/input
+docker exec namenode hdfs dfs -put /tmp/data.txt /user/demo/input/
 ```
 
 #### 4. Запуск MapReduce-задачи
 
 ```powershell
 docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
-    /simpleapp/input /simpleapp/output
+    "-Dmapreduce.job.ubertask.enable=true" `
+    "-Dmapreduce.job.ubertask.maxmaps=20" `
+    "-Dmapreduce.job.ubertask.maxbytes=536870912" `
+    /user/demo/input /user/demo/output
 ```
 
-> Имя main-класса указывать **не нужно** — оно уже прописано в манифесте JAR.
+> **Важно:**
+> - Имя main-класса указывать **не нужно** — оно прописано в манифесте JAR.
+> - Параметры `ubertask` обязательны для multi-host Docker-кластера (см. [Примечание об uber mode](#примечание-об-uber-mode)).
 
 #### 5. Просмотр результата
 
 ```powershell
-docker exec namenode hdfs dfs -cat /simpleapp/output/part-r-00000
+docker exec namenode hdfs dfs -cat /user/demo/output/part-r-00000
 ```
 
-> **Примечание:** перед повторным запуском удали выходную директорию:
-> `docker exec namenode hdfs dfs -rm -r /simpleapp/output`
+> Перед повторным запуском удалите выходную директорию:
+> ```powershell
+> docker exec namenode hdfs dfs -rm -r /user/demo/output
+> ```
 
 ### Свой входной файл
-
-Чтобы посчитать строки в своём файле:
 
 ```powershell
 docker cp my-file.txt namenode:/tmp/my-file.txt
@@ -287,58 +282,163 @@ docker exec namenode hdfs dfs -put /tmp/my-file.txt /mydata/input/
 .\scripts\run-simpleapp.ps1 -InputPath /mydata/input -OutputPath /mydata/output
 ```
 
-## Структура репозитория
+### Примечание об uber mode
+
+В multi-host Docker-кластере каждый ноутбук имеет свою внутреннюю Docker bridge-сеть с IP-адресами вида `172.18.x.x`. Задачи на одном ноуте не могут напрямую подключиться к контейнерам на другом ноуте по этим внутренним IP.
+
+**Uber mode** решает эту проблему: все map- и reduce-задачи выполняются внутри одного контейнера ApplicationMaster, без необходимости межузловой коммуникации. Для небольших и средних задач это оптимальный подход.
+
+---
+
+## Локальный тест на одном ноуте
+
+Перед развёртыванием на 3 машины можно убедиться, что образ и конфиги работают, запустив всё на одном ноуте:
+
+```powershell
+docker compose -f docker-compose.local.yml up -d --build
+
+# Проверка: должно быть 2 DataNode и 2 NodeManager
+docker exec namenode hdfs dfsadmin -report
+docker exec resourcemanager yarn node -list -all
+
+# Уборка
+docker compose -f docker-compose.local.yml down -v
+```
+
+---
+
+## Остановка кластера
+
+На каждом ноуте:
+
+```powershell
+# На мастере:
+docker compose -f docker-compose.master.yml down
+
+# На каждом воркере:
+docker compose -f docker-compose.worker.yml down
+```
+
+Чтобы также удалить данные HDFS (полный сброс):
+
+```powershell
+docker compose -f docker-compose.master.yml down -v    # на мастере
+docker compose -f docker-compose.worker.yml down -v    # на воркерах
+```
+
+---
+
+## Веб-интерфейсы
+
+| URL | Описание |
+|-----|----------|
+| `http://<MASTER_IP>:9870` | **NameNode** — состояние HDFS, DataNode'ы, файловая система |
+| `http://<MASTER_IP>:8088` | **ResourceManager** — YARN, запущенные приложения, NodeManager'ы |
+| `http://<MASTER_IP>:19888` | **JobHistory** — история завершённых MapReduce-задач |
+| `http://<MASTER_IP>:9868` | **SecondaryNameNode** |
+| `http://<WORKER_IP>:9864` | **DataNode** на воркере |
+| `http://<WORKER_IP>:8042` | **NodeManager** на воркере |
+
+---
+
+## Структура проекта
 
 ```
-.
-├── Dockerfile               # один образ для всех ролей Hadoop
-├── docker-compose.master.yml
-├── docker-compose.worker.yml
-├── docker-compose.local.yml # all-in-one для теста на 1 машине
-├── .env.example             # шаблон конфигурации сети
+clustrer_hadoop/
+├── Dockerfile                   # Единый образ Hadoop для всех ролей
+├── docker-compose.master.yml    # Compose для мастер-ноута
+├── docker-compose.worker.yml    # Compose для воркер-ноута
+├── docker-compose.local.yml     # All-in-one для теста на 1 машине
+├── .env.example                 # Шаблон конфигурации (скопировать в .env)
+│
 ├── app/
-│   └── SimpleApp/           # учебное MapReduce-приложение (LineCount)
-│       ├── pom.xml
-│       └── src/
-├── config/                  # Hadoop конфиги, копируются в /opt/hadoop/etc/hadoop
+│   └── SimpleApp/               # MapReduce-приложение LineCount
+│       ├── pom.xml              # Maven-конфиг (Hadoop 3.3.6, Java 11)
+│       └── src/                 # Исходники Java
+│
+├── config/                      # Конфиги Hadoop (копируются в образ)
 │   ├── core-site.xml
 │   ├── hdfs-site.xml
 │   ├── yarn-site.xml
 │   ├── mapred-site.xml
 │   ├── hadoop-env.sh
 │   └── workers
+│
 └── scripts/
-    ├── entrypoint.sh        # выбирает сервис по $HADOOP_ROLE
-    ├── build-app.ps1        # сборка SimpleApp JAR (Maven в Docker) — PowerShell
-    ├── build-app.sh         # то же для Linux / Git Bash
-    ├── run-simpleapp.ps1    # сборка + загрузка данных + запуск MR job — PowerShell
-    └── run-simpleapp.sh     # то же для Linux / Git Bash
+    ├── entrypoint.sh            # Стартовый скрипт контейнера (выбор роли)
+    ├── build-app.ps1            # Сборка JAR через Maven в Docker (PowerShell)
+    ├── build-app.sh             # Сборка JAR (Bash)
+    ├── run-simpleapp.ps1        # Полный цикл: сборка + запуск MR (PowerShell)
+    └── run-simpleapp.sh         # Полный цикл (Bash)
 ```
+
+---
 
 ## Решение проблем
 
-**`MASTER_IP должен быть задан в .env`** — забыл скопировать `.env.example`
-в `.env` или указать в нём IP.
+### `MASTER_IP должен быть задан в .env`
 
-**DataNode стартовал, но не появляется в `hdfs dfsadmin -report`** —
-значит NameNode не может достучаться до DataNode по hostname `worker1` /
-`worker2`. Проверь:
-- IP в `.env` совпадают с реальными адресами;
-- порты 9866, 9867 не закрыты файрволом на воркере;
-- `docker logs datanode` на воркере — нет ли там ошибок резолва имени.
+Забыли скопировать `.env.example` в `.env` или не заполнили IP-адреса.
 
-**MR-job висит в `ACCEPTED` и не уходит в `RUNNING`** — у NodeManager не
-хватает памяти. Уменьши `yarn.nodemanager.resource.memory-mb` в
-`config/yarn-site.xml` под реальное железо или, наоборот, дай Docker
-Desktop больше RAM (Settings → Resources).
+```powershell
+copy .env.example .env
+notepad .env
+```
 
-**NameNode не стартует, ругается на формат** — обычно это после смены
-конфигов с уже отформатированной FS. На мастере:
+### DataNode не появляется в `hdfs dfsadmin -report`
+
+NameNode не может подключиться к DataNode по hostname `worker1` / `worker2`. Проверьте:
+
+1. IP-адреса в `.env` совпадают с реальными (`ipconfig` на каждом ноуте)
+2. Порты 9866, 9867 не заблокированы файрволом на воркере
+3. Логи DataNode: `docker logs datanode` — нет ли ошибок подключения
+
+### MR-задача висит в ACCEPTED
+
+У NodeManager не хватает памяти. Варианты:
+
+- Уменьшить `yarn.nodemanager.resource.memory-mb` в `config/yarn-site.xml`
+- Дать Docker Desktop больше RAM: Settings → Resources
+
+### NameNode не стартует (ошибка формата)
+
+Обычно после смены конфигов с уже отформатированной FS. Полный сброс:
 
 ```powershell
 docker compose -f docker-compose.master.yml down -v
 docker compose -f docker-compose.master.yml up -d --build
 ```
+
+### Не открываются файлы в NameNode Web UI
+
+Браузер получает ошибку вида `Failed to load http://worker2:9874/...`. Это нормальное поведение — HDFS перенаправляет на hostname DataNode, который браузер на вашем ноуте не может разрешить.
+
+**Решение 1** — добавить записи в `C:\Windows\System32\drivers\etc\hosts`:
+```
+192.168.1.11  worker1
+192.168.1.12  worker2
+```
+
+**Решение 2** — просматривать файлы через командную строку:
+```powershell
+docker exec namenode hdfs dfs -cat /path/to/file
+```
+
+### MapReduce-задача падает с Connection refused
+
+Ошибка `java.net.ConnectException: Connection refused` при доступе к `worker1:9866` или `worker2:32001` означает, что задачи на разных ноутах не могут связаться через внутренние Docker IP.
+
+**Решение:** убедитесь, что в команде запуска включён **uber mode** (скрипт `run-simpleapp.ps1` делает это автоматически):
+
+```powershell
+docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
+    "-Dmapreduce.job.ubertask.enable=true" `
+    "-Dmapreduce.job.ubertask.maxmaps=20" `
+    "-Dmapreduce.job.ubertask.maxbytes=536870912" `
+    /input /output
+```
+
+---
 
 ## Лицензия
 
