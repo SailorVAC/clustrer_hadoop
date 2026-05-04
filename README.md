@@ -136,6 +136,12 @@ MASTER_IP=192.168.1.10
 WORKER1_IP=192.168.1.11
 WORKER2_IP=192.168.1.12
 NODE_NAME=worker2
+
+# DataNode-порты worker2 смещены, чтобы не конфликтовать с worker1
+# (NameNode видит оба DataNode с одного gateway IP мастера)
+DN_HTTP_PORT=9874
+DN_XFER_PORT=9876
+DN_IPC_PORT=9877
 ```
 
 ### Шаг 4. Запуск мастера
@@ -252,12 +258,15 @@ docker exec namenode hdfs dfs -put /tmp/data.txt /user/demo/input/
 
 ```powershell
 docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
+    "-Ddfs.client.use.datanode.hostname=true" `
     /user/demo/input /user/demo/output
 ```
 
-> **Важно:** имя main-класса указывать **не нужно** — оно прописано в манифесте JAR.
+> **Важно:**
+> - Имя main-класса указывать **не нужно** — оно прописано в манифесте JAR.
+> - Флаг `-Ddfs.client.use.datanode.hostname=true` обязателен для multi-host Docker-кластера — без него HDFS-клиент пытается подключиться к DataNode по Docker bridge IP (172.18.0.1) вместо LAN IP.
 
-Map- и reduce-задачи распределяются по NodeManager'ам на разных воркерах — полноценное распределённое выполнение.
+Map- и reduce-задачи распределяются по NodeManager'ам на разных воркерах — полноценное распределённое выполнение (`uber mode : false`).
 
 #### 5. Просмотр результата
 
@@ -281,18 +290,42 @@ docker exec namenode hdfs dfs -put /tmp/my-file.txt /mydata/input/
 
 ### Как работает межузловая коммуникация
 
-В multi-host Docker-кластере каждый ноутбук имеет свою Docker bridge-сеть с
-внутренними IP (172.18.x.x). Контейнеры на разных ноутах не видят друг друга
-по этим IP.
+В multi-host Docker-кластере каждый ноутбук имеет свою **изолированную Docker bridge-сеть** (172.18.x.x). Контейнеры на разных ноутах не видят друг друга по этим IP. Это вызывает две проблемы, которые решены в проекте:
 
-Решение реализовано на уровне `entrypoint.sh`: при старте контейнеров DataNode и
-NodeManager скрипт удаляет из `/etc/hosts` запись Docker bridge IP для hostname
-контейнера, оставляя только запись `extra_hosts` с LAN IP. Благодаря этому
-Java-сервисы (`InetAddress.getLocalHost()`) рекламируют LAN IP ноутбука, а не
-внутренний Docker IP. Все нужные порты (8041, 9866, 13562, 32000–32001) проброшены
-через Docker, поэтому коммуникация между узлами работает через LAN.
+#### Проблема 1: Java-сервисы рекламируют Docker bridge IP
 
-Результат: **map- и reduce-задачи выполняются распределённо на разных воркерах**.
+Docker автоматически добавляет в `/etc/hosts` контейнера запись `172.18.0.3 worker1`.
+Если в `docker-compose.worker.yml` также заданы `extra_hosts` (например `192.168.1.11 worker1`),
+то в `/etc/hosts` оказываются **две** записи для одного hostname.
+`InetAddress.getLocalHost()` в Java может взять bridge IP (172.18.0.3),
+и MRAppMaster/NodeManager будут рекламировать адрес, недостижимый с других ноутов.
+
+**Решение (entrypoint.sh):** при старте DataNode и NodeManager функция `fix_hostname_for_lan()`
+удаляет из `/etc/hosts` строку с bridge IP (172.x.x.x), оставляя только LAN IP из `extra_hosts`.
+Теперь Java-сервисы рекламируют LAN IP ноутбука.
+
+#### Проблема 2: NameNode подменяет IP DataNode'ов
+
+Когда DataNode на worker1 подключается к NameNode на мастере, соединение проходит
+через Docker port forwarding. NameNode видит source IP = `172.18.0.1` (gateway bridge-сети мастера)
+и записывает его как адрес DataNode. Когда HDFS-клиент просит записать данные, NameNode
+возвращает `172.18.0.1:9866` — адрес, по которому DataNode **не** доступен.
+
+**Решение (mapred-site.xml + флаг -D):** параметр `dfs.client.use.datanode.hostname=true`
+заставляет HDFS-клиент подключаться к DataNode по **hostname** (`worker1`, `worker2`),
+который через `extra_hosts` резолвится в правильный LAN IP. Параметр задан и в конфигах,
+и явно в скриптах запуска (`-Ddfs.client.use.datanode.hostname=true`).
+
+#### Порты DataNode
+
+Worker2 использует **смещённые** порты DataNode (9874/9876/9877 вместо 9864/9866/9867).
+Это нужно потому, что NameNode видит оба DataNode с одного gateway IP (`172.18.0.1`) —
+если бы порты совпадали, NameNode не смог бы их различить.
+
+Все нужные порты (8041, 9866, 13562, 32000–32001 и т.д.) проброшены через Docker,
+поэтому коммуникация между узлами работает через LAN.
+
+**Результат: map- и reduce-задачи выполняются распределённо на разных воркерах** (`uber mode : false`).
 
 ---
 
@@ -432,17 +465,19 @@ docker exec namenode hdfs dfs -cat /path/to/file
 
 ### MapReduce-задача падает с Connection refused
 
-Ошибка `java.net.ConnectException: Connection refused` при доступе к `worker1:9866` или `worker2:32001` означает, что Hadoop-сервисы рекламируют Docker bridge IP (172.18.x.x) вместо LAN IP.
+Ошибка `java.net.ConnectException: Connection refused` при доступе к `172.18.0.1:9866` или подобным адресам:
 
-**Решение:** пересоберите и перезапустите контейнеры на воркерах — `entrypoint.sh` автоматически исправляет `/etc/hosts`:
+1. **HDFS-клиент использует bridge IP вместо hostname.** Убедитесь, что в команде запуска есть флаг `-Ddfs.client.use.datanode.hostname=true` (автоматический скрипт уже его включает).
 
-```powershell
-# На каждом воркере:
-docker compose -f docker-compose.worker.yml down
-docker compose -f docker-compose.worker.yml up -d --build
-```
+2. **entrypoint.sh не обновлён.** Пересоберите контейнеры на **всех** ноутах (мастер + воркеры):
+   ```powershell
+   docker compose -f docker-compose.worker.yml down
+   docker compose -f docker-compose.worker.yml up -d --build
+   ```
 
-Если проблема сохраняется, проверьте что порты 9866, 13562, 32000–32001 открыты в файрволе на воркерах.
+3. **Порты worker2 не смещены.** В `.env` на worker2 должны быть `DN_HTTP_PORT=9874`, `DN_XFER_PORT=9876`, `DN_IPC_PORT=9877`.
+
+4. **Файрвол.** Проверьте что порты 9866, 9876, 13562, 32000–32001 открыты на воркерах.
 
 ---
 
