@@ -61,7 +61,14 @@ fix_hostname_for_lan() {
     local count
     count=$(grep -c "\b${hn}\b" /etc/hosts 2>/dev/null || echo 0)
     if [ "$count" -ge 2 ]; then
-        sed -i "/^172\..*\b${hn}\b/d" /etc/hosts
+        # Cannot use sed -i on /etc/hosts: Docker bind-mounts it, so rename
+        # (which sed -i uses internally) fails with "Device or resource busy".
+        # Instead, filter into a temp file and write back via cat > (in-place).
+        local tmpf
+        tmpf=$(mktemp)
+        grep -v "^172\..*\b${hn}\b" /etc/hosts > "$tmpf"
+        cat "$tmpf" > /etc/hosts
+        rm -f "$tmpf"
         echo "[entrypoint] /etc/hosts: removed bridge IP for ${hn}, keeping LAN IP only"
     fi
 }
