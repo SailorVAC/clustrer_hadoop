@@ -97,15 +97,10 @@ Write-Host "    Input:  $InputPath"
 Write-Host "    Output: $OutputPath"
 Write-Host ""
 
-# Use splatting to ensure each argument is passed correctly to docker
-$dockerArgs = @(
-    "exec", $SubmitContainer,
-    "hadoop", "jar", "/tmp/$JarName",
-    "by.bsu.rct.bigdata.LineCountDriverMR",
-    $InputPath, $OutputPath
-)
-Write-Host "DEBUG: docker $($dockerArgs -join ' ')"
-& docker @dockerArgs
+# Main-Class is already set in the JAR manifest (pom.xml maven-jar-plugin),
+# so do NOT pass the class name here — otherwise hadoop jar treats it as
+# an extra argument and the app receives 3 args instead of 2.
+docker exec $SubmitContainer hadoop jar "/tmp/$JarName" $InputPath $OutputPath
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: MapReduce job failed" -ForegroundColor Red

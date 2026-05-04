@@ -262,8 +262,10 @@ docker exec namenode hdfs dfs -put -f /tmp/input.txt /simpleapp/input/
 
 ```powershell
 docker exec resourcemanager hadoop jar /tmp/SimpleApp-1.0-SNAPSHOT.jar `
-    by.bsu.rct.bigdata.LineCountDriverMR /simpleapp/input /simpleapp/output
+    /simpleapp/input /simpleapp/output
 ```
+
+> Имя main-класса указывать **не нужно** — оно уже прописано в манифесте JAR.
 
 #### 5. Просмотр результата
 

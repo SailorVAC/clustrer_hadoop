@@ -83,9 +83,11 @@ echo "    Вход:  ${HDFS_INPUT}"
 echo "    Выход: ${HDFS_OUTPUT}"
 echo ""
 
+# Main-Class is already set in the JAR manifest (pom.xml maven-jar-plugin),
+# so do NOT pass the class name here — otherwise hadoop jar treats it as
+# an extra argument and the app receives 3 args instead of 2.
 docker exec "$SUBMIT_CONTAINER" \
     hadoop jar "/tmp/${JAR_NAME}" \
-    by.bsu.rct.bigdata.LineCountDriverMR \
     "$HDFS_INPUT" "$HDFS_OUTPUT"
 
 # ---------- 6. Показываем результат ----------
