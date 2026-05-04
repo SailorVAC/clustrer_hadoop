@@ -73,6 +73,7 @@ echo ""
 # an extra argument and the app receives 3 args instead of 2.
 docker exec "$SUBMIT_CONTAINER" \
     hadoop jar "/tmp/${JAR_NAME}" \
+    -Ddfs.client.use.datanode.hostname=true \
     "$HDFS_INPUT" "$HDFS_OUTPUT"
 
 # ---------- 6. Show results ----------

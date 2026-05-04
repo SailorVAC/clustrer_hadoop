@@ -36,4 +36,17 @@
         <name>mapreduce.application.classpath</name>
         <value>/opt/hadoop/etc/hadoop:/opt/hadoop/share/hadoop/common/lib/*:/opt/hadoop/share/hadoop/common/*:/opt/hadoop/share/hadoop/hdfs:/opt/hadoop/share/hadoop/hdfs/lib/*:/opt/hadoop/share/hadoop/hdfs/*:/opt/hadoop/share/hadoop/mapreduce/*:/opt/hadoop/share/hadoop/yarn:/opt/hadoop/share/hadoop/yarn/lib/*:/opt/hadoop/share/hadoop/yarn/*</value>
     </property>
+
+    <!-- In multi-host Docker clusters, the NameNode records DataNode IPs as the
+         Docker bridge gateway (172.18.0.1) instead of the actual LAN IPs.
+         These settings ensure MapReduce tasks connect to DataNodes via hostname
+         (worker1/worker2), which resolves to the correct LAN IP via extra_hosts. -->
+    <property>
+        <name>dfs.client.use.datanode.hostname</name>
+        <value>true</value>
+    </property>
+    <property>
+        <name>dfs.datanode.use.datanode.hostname</name>
+        <value>true</value>
+    </property>
 </configuration>
