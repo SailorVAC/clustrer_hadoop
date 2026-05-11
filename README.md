@@ -25,12 +25,13 @@
 5. [Настройка ролей](#настройка-ролей)
 6. [Генератор конфигов (setup-cluster)](#генератор-конфигов-setup-cluster)
 7. [Ручная настройка (без скрипта)](#ручная-настройка-без-скрипта)
-8. [Лабораторные работы](#лабораторные-работы)
-9. [Запуск SimpleApp (LineCount)](#запуск-simpleapp-linecount)
-10. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
-11. [Веб-интерфейсы](#веб-интерфейсы)
-12. [Структура проекта](#структура-проекта)
-13. [Решение проблем](#решение-проблем)
+8. [Запуск своего JAR-а на кластере](#запуск-своего-jar-а-на-кластере)
+9. [Лабораторные работы](#лабораторные-работы)
+10. [Запуск SimpleApp (LineCount)](#запуск-simpleapp-linecount)
+11. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
+12. [Веб-интерфейсы](#веб-интерфейсы)
+13. [Структура проекта](#структура-проекта)
+14. [Решение проблем](#решение-проблем)
 
 ---
 
@@ -326,6 +327,62 @@ docker exec resourcemanager yarn node -list
 - `http://<MASTER_IP>:8088` → вкладка Nodes — 2 active nodes
 
 **Кластер развёрнут и готов к работе!**
+
+---
+
+## Запуск своего JAR-а на кластере
+
+В большинстве случаев тебе достаточно одного скрипта — `scripts/submit-jar.sh`
+(или `scripts/submit-jar.ps1` под Windows). Он сам:
+
+1. находит работающий submit-контейнер (`resourcemanager` → `namenode`);
+2. копирует локальный JAR в `/tmp/` контейнера;
+3. зовёт `hadoop jar` или `spark-submit` с нужными флагами;
+4. пробрасывает аргументы программы (всё, что идёт после `--`).
+
+```bash
+# MapReduce: main-класс берётся из манифеста JAR-а
+bash scripts/submit-jar.sh -e hadoop ./my-mr.jar -- /hdfs/in /hdfs/out
+
+# MapReduce + переопределение класса + дополнительные -D
+bash scripts/submit-jar.sh -e hadoop \
+    -c org.example.MyDriver \
+    -D mapreduce.job.reduces=4 \
+    -D dfs.client.use.datanode.hostname=true \
+    ./my-mr.jar -- /hdfs/in /hdfs/out
+
+# Spark client mode на YARN
+bash scripts/submit-jar.sh -e spark -c org.example.Main ./my-spark.jar -- arg1 arg2
+
+# Spark cluster mode + переопределение лимитов
+bash scripts/submit-jar.sh -e spark -m cluster \
+    -n "My Spark Job" \
+    --conf spark.executor.memory=1g \
+    --conf spark.executor.cores=2 \
+    ./my-spark.jar -- /hdfs/in
+```
+
+Полная справка по флагам: `bash scripts/submit-jar.sh -h`.
+
+PowerShell-вариант (запускать из корня репо):
+
+```powershell
+.\scripts\submit-jar.ps1 -Engine hadoop -Jar .\my.jar -- /hdfs/in /hdfs/out
+
+.\scripts\submit-jar.ps1 -Engine spark `
+    -Class org.example.Main -DeployMode cluster `
+    -Conf @("spark.executor.memory=1g","spark.executor.cores=2") `
+    -Jar .\my.jar -- /hdfs/in
+```
+
+> Поведение `-Ddfs.client.use.datanode.hostname=true` (для MR-задач в multi-host
+> Docker-кластере) скрипт **не** добавляет автоматически — добавь его сам
+> через `-D`, иначе HDFS-клиент может пытаться достучаться до DataNode по
+> Docker bridge IP.
+
+`scripts/run-lab1-spark.sh`, `scripts/run-lab2.sh` и `scripts/run-lab3-spark.sh`
+теперь являются тонкими обёртками над `submit-jar.sh` — подставляют нужный JAR,
+main-класс и пути, дальше делегируют запуск универсальному скрипту.
 
 ---
 
@@ -643,10 +700,12 @@ clustrer_hadoop/
     ├── build-app.{ps1,sh}         # Сборка SimpleApp (Lab 1 часть 1)
     ├── build-labs.sh              # Сборка JAR-ов всех четырёх лаб
     ├── upload-lab-data.sh         # Заливает data/ в HDFS
+    ├── submit-jar.sh              # Универсальный hadoop/spark submit (Bash)
+    ├── submit-jar.ps1             # Универсальный hadoop/spark submit (PowerShell)
     ├── run-simpleapp.{ps1,sh}     # Полный цикл для SimpleApp
-    ├── run-lab1-spark.sh          # spark-submit Lab 1 / часть 2
-    ├── run-lab2.sh                # hadoop jar Lab 2 SalesDriver
-    └── run-lab3-spark.sh          # spark-submit Lab 3
+    ├── run-lab1-spark.sh          # обёртка над submit-jar.sh для Lab 1 / часть 2
+    ├── run-lab2.sh                # обёртка над submit-jar.sh для Lab 2
+    └── run-lab3-spark.sh          # обёртка над submit-jar.sh для Lab 3
 ```
 
 ---
