@@ -1,0 +1,4 @@
+Application:   Lab 1 — Line count Spark App
+Mode:          --master yarn --deploy-mode client
+Input:         hdfs:///user/HUser/Work/Sudilovskiy/sample-text.txt
+Result:        Number of lines: 10

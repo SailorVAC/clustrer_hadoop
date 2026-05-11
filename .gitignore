@@ -3,8 +3,13 @@
 cluster.conf
 docker-compose.generated.yml
 
-# Docker-логи/данные, если кто-то решит сделать bind-mount
-data/
+# Docker-логи/данные, если кто-то решит сделать bind-mount.
+# Однако учебные входные файлы (sales_sample.csv, categories.csv,
+# sample-text.txt) лежат в data/ и должны быть в репо.
+data/*
+!data/sales_sample.csv
+!data/categories.csv
+!data/sample-text.txt
 logs/
 
 # Maven build artifacts

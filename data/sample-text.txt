@@ -1,0 +1,10 @@
+Apache Hadoop is an open-source framework for distributed storage and processing.
+Apache Spark is a fast and general-purpose cluster computing system.
+MapReduce splits work into map and reduce phases.
+Spark uses in-memory computation for faster performance than disk-based MapReduce.
+HDFS provides fault-tolerant distributed storage.
+YARN is the cluster resource manager for Hadoop.
+Hello, world!
+This is a small text file used to test LineCount applications.
+The file has exactly ten lines of text.
+That is line ten — the final line of the file.
