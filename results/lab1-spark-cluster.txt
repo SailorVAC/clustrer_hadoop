@@ -1,0 +1,6 @@
+Application:   Lab 1 — Line count Spark App
+Mode:          --master yarn --deploy-mode cluster
+Input:         hdfs:///user/HUser/Work/Sudilovskiy/sample-text.txt
+ApplicationID: application_1778526164755_0004
+Final status:  SUCCEEDED
+Result:        Number of lines: 10

@@ -1,11 +1,18 @@
 # 🐘 Hadoop-кластер на 3 ноутбуках
 
 <p align="center">
-  <b>Hadoop 3.3.6</b> &nbsp;|&nbsp; HDFS + YARN + MapReduce &nbsp;|&nbsp; Docker &nbsp;|&nbsp; Windows
+  <b>Hadoop 3.3.6</b> &nbsp;|&nbsp; <b>Spark 3.5.7</b> &nbsp;|&nbsp; HDFS + YARN + MapReduce &nbsp;|&nbsp; Docker &nbsp;|&nbsp; Windows
 </p>
 
-Развёртывание распределённого Hadoop-кластера на **3 Windows-ноутбуках** с помощью Docker.
-В комплекте — учебное MapReduce-приложение **SimpleApp (LineCount)**.
+Развёртывание распределённого Hadoop+Spark-кластера на **3 Windows-ноутбуках** с помощью Docker.
+В комплекте — четыре учебных приложения:
+
+- `app/SimpleApp/` — **Lab 1 / часть 1** — MapReduce LineCount (LineCountDriverMR).
+- `app/lab1_spark/` — **Lab 1 / часть 2** — Spark LineCount (LineCountDriverSpark), запускается через `spark-submit --master yarn`.
+- `app/lab2_sales_mapreduce/` — **Lab 2** — MapReduce SalesDriver: фильтрует продажи по дате (11–20 число месяца) и дробной части суммы (.95–.99), возвращает максимальную сумму по каждой категории.
+- `app/lab3_spark/` — **Lab 3** — Spark-вариант той же задачи с дополнительным `join` справочника `categories.csv` (catID → имя категории).
+
+См. [Лабораторные работы](#лабораторные-работы).
 
 ---
 
@@ -15,14 +22,15 @@
 2. [Требования](#требования)
 3. [Быстрый старт (3 шага)](#быстрый-старт-3-шага)
 4. [Остановка кластера](#остановка-кластера)
-5. [Запуск SimpleApp (LineCount)](#запуск-simpleapp-linecount)
-6. [Настройка ролей](#настройка-ролей)
-7. [Генератор конфигов (setup-cluster)](#генератор-конфигов-setup-cluster)
-8. [Ручная настройка (без скрипта)](#ручная-настройка-без-скрипта)
-9. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
-10. [Веб-интерфейсы](#веб-интерфейсы)
-11. [Структура проекта](#структура-проекта)
-12. [Решение проблем](#решение-проблем)
+5. [Настройка ролей](#настройка-ролей)
+6. [Генератор конфигов (setup-cluster)](#генератор-конфигов-setup-cluster)
+7. [Ручная настройка (без скрипта)](#ручная-настройка-без-скрипта)
+8. [Лабораторные работы](#лабораторные-работы)
+9. [Запуск SimpleApp (LineCount)](#запуск-simpleapp-linecount)
+10. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
+11. [Веб-интерфейсы](#веб-интерфейсы)
+12. [Структура проекта](#структура-проекта)
+13. [Решение проблем](#решение-проблем)
 
 ---
 
@@ -38,6 +46,8 @@
 │  ┌─────────┐ ┌────────────┐ │     │  ┌──────────┐   │     │  ┌──────────┐   │
 │  │ 2NN     │ │HistoryServ │ │     │  │NodeMgr   │   │     │  │NodeMgr   │   │
 │  └─────────┘ └────────────┘ │     │  └──────────┘   │     │  └──────────┘   │
+│  + Spark 3.5.7 (client)      │     │  + Spark 3.5.7  │     │  + Spark 3.5.7  │
+│  для spark-submit на YARN    │     │  (executors)    │     │  (executors)    │
 └──────────┬──────────────────┘     └────────┬─────────┘     └────────┬─────────┘
            │         LAN (192.168.x.x)       │                        │
            └─────────────────────────────────┴────────────────────────┘
@@ -319,6 +329,110 @@ docker exec resourcemanager yarn node -list
 
 ---
 
+## Лабораторные работы
+
+В репозитории лежат **четыре** приложения, которые запускаются на одном и том же
+кластере (HDFS + YARN, Spark поставлен в тот же образ).  Все скрипты ниже
+выполняются на той ноде, где запущен master-стек (контейнеры `namenode` /
+`resourcemanager` / `historyserver`).
+
+### Подготовка входных данных
+
+```bash
+# Поднять локальный 3-нодовый кластер (если ещё не запущен)
+docker compose -f docker-compose.local.yml up -d --build
+
+# Залить учебные файлы в HDFS
+bash scripts/upload-lab-data.sh
+```
+
+Скрипт `upload-lab-data.sh` кладёт в `hdfs:///user/HUser/Work/Sudilovskiy/`:
+
+| Файл | Источник | Назначение |
+|------|----------|------------|
+| `sample-text.txt` | `data/sample-text.txt` (10 строк) | вход для Lab 1 / часть 2 (Spark LineCount) |
+| `data/sales_sample.csv` | `data/sales_sample.csv` (21 163 записи) | вход для Lab 2 и Lab 3 |
+| `data/categories.csv` | `data/categories.csv` (cat1–cat12) | словарь категорий для Lab 3 |
+
+### Сборка JAR-ов
+
+```bash
+bash scripts/build-labs.sh                  # все четыре приложения
+bash scripts/build-labs.sh lab1_spark       # только одно
+```
+
+Maven запускается в контейнере `maven:3.9-eclipse-temurin-11`, поэтому ставить
+Maven/JDK на хосте не нужно.  Кеш `~/.m2-clustrer-hadoop` сохраняется между
+запусками, так что Spark-зависимости качаются один раз.
+
+### Lab 1 / часть 2 — Spark LineCount
+
+```bash
+bash scripts/run-lab1-spark.sh                                   # YARN client
+DEPLOY_MODE=cluster bash scripts/run-lab1-spark.sh               # YARN cluster
+bash scripts/run-lab1-spark.sh /path/in/hdfs/to/your.txt         # свой вход
+```
+
+Результат (на нашем 10-строчном файле): `Number of lines: 10`. В cluster-mode
+stdout приложения уходит в YARN log, см. `yarn logs -applicationId <appId>`.
+
+### Lab 2 — SalesDriver (MapReduce)
+
+```bash
+bash scripts/run-lab2.sh
+bash scripts/run-lab2.sh <hdfs_input_csv> <hdfs_output_dir>
+```
+
+Скрипт сам удаляет предыдущий output-каталог, запускает MR-job и в конце
+печатает `part-r-00000`.  Формат строки: `<categoryID>\t<max amount>`.
+
+### Lab 3 — Spark, join с categories.csv
+
+```bash
+bash scripts/run-lab3-spark.sh                                            # client
+DEPLOY_MODE=cluster bash scripts/run-lab3-spark.sh \
+    /user/HUser/Work/Sudilovskiy/data/sales_full.csv \
+    /user/HUser/Work/Sudilovskiy/data/categories.csv                       # cluster mode
+```
+
+Приложение из архива различает «sample»-файл (имя содержит подстроку `sample`)
+и «полный» файл: для первого результат печатается в stdout, для второго
+сохраняется в `hdfs:///user/HUser/Work/Sudilovskiy/result_lab3`.
+При cluster-mode скрипт после успешного завершения сам делает
+`hdfs dfs -cat` сохранённого `part-00000`.
+
+### Результаты прогона на этом кластере
+
+Файлы зафиксированы в `results/`:
+
+```
+results/
+├── lab1-spark-client.txt        # Number of lines: 10  (YARN client)
+├── lab1-spark-cluster.txt       # Number of lines: 10  (YARN cluster)
+├── lab2-mapreduce.txt           # cat1..cat12 -> максимум суммы
+├── lab3-spark-client.txt        # categoryName: maxAmount (отсортировано)
+└── lab3-spark-cluster.txt       # то же, прогон в cluster-mode (читали из result_lab3)
+```
+
+Контрольные значения (Lab 2 + Lab 3):
+
+| catID | Категория             | Max amount |
+|-------|-----------------------|------------|
+| cat1  | Фрукты                | 27.97      |
+| cat2  | Овощи                 | 23.96      |
+| cat3  | Молочные продукты     | 16.99      |
+| cat4  | Яйца                  |  4.98      |
+| cat5  | Мясо                  | 47.97      |
+| cat6  | Мясные полуфабрикаты  | 39.95      |
+| cat7  | Рыба и морепродукты   | 32.99      |
+| cat8  | Бакалея               | 59.97      |
+| cat9  | Кондитерские изделия  | 26.97      |
+| cat10 | Хлеб и выпечка        |  7.98      |
+| cat11 | Колбасные изделия     | 20.97      |
+| cat12 | Напитки               |  1.98      |
+
+---
+
 ## Запуск SimpleApp (LineCount)
 
 **SimpleApp** — учебное MapReduce-приложение, которое считает количество строк во входных файлах.
@@ -495,28 +609,44 @@ clustrer_hadoop/
 ├── .env.example                 # Шаблон .env для ручной настройки
 │
 ├── app/
-│   └── SimpleApp/               # MapReduce-приложение LineCount
-│       ├── pom.xml              # Maven-конфиг (Hadoop 3.3.6, Java 11)
-│       └── src/                 # Исходники Java
+│   ├── SimpleApp/                 # Lab 1 / часть 1 — MapReduce LineCount
+│   ├── lab1_spark/                # Lab 1 / часть 2 — Spark LineCount
+│   ├── lab2_sales_mapreduce/      # Lab 2 — MapReduce SalesDriver
+│   └── lab3_spark/                # Lab 3 — Spark sales + categories join
 │
-├── config/                      # Конфиги Hadoop (копируются в образ)
+├── data/                          # Учебные входные файлы (на хосте)
+│   ├── sample-text.txt            # вход для Lab 1 / часть 2
+│   ├── sales_sample.csv           # вход для Lab 2 и Lab 3
+│   └── categories.csv             # справочник cat1..cat12 → имя
+│
+├── results/                       # Зафиксированные результаты прогона
+│   ├── lab1-spark-client.txt
+│   ├── lab1-spark-cluster.txt
+│   ├── lab2-mapreduce.txt
+│   ├── lab3-spark-client.txt
+│   └── lab3-spark-cluster.txt
+│
+├── config/                        # Конфиги Hadoop/Spark (копируются в образ)
 │   ├── core-site.xml
 │   ├── hdfs-site.xml
 │   ├── yarn-site.xml
 │   ├── mapred-site.xml
 │   ├── hadoop-env.sh
-│   └── workers
+│   ├── workers
+│   └── spark-defaults.conf        # Spark смотрит на YARN + общие лимиты
 │
 └── scripts/
-    ├── entrypoint.sh            # Стартовый скрипт контейнера (выбор роли)
-    ├── start.ps1                # Логика запуска (вызывается из start.bat)
-    ├── stop.ps1                 # Логика остановки
-    ├── setup-cluster.ps1        # Генератор конфигов (PowerShell)
-    ├── setup-cluster.sh         # Генератор конфигов (Bash)
-    ├── build-app.ps1            # Сборка JAR через Maven в Docker
-    ├── build-app.sh             # Сборка JAR (Bash)
-    ├── run-simpleapp.ps1        # Полный цикл: сборка + запуск MR
-    └── run-simpleapp.sh         # Полный цикл (Bash)
+    ├── entrypoint.sh              # Стартовый скрипт контейнера (выбор роли)
+    ├── start.ps1                  # Логика запуска (вызывается из start.bat)
+    ├── stop.ps1                   # Логика остановки
+    ├── setup-cluster.{ps1,sh}     # Генератор конфигов
+    ├── build-app.{ps1,sh}         # Сборка SimpleApp (Lab 1 часть 1)
+    ├── build-labs.sh              # Сборка JAR-ов всех четырёх лаб
+    ├── upload-lab-data.sh         # Заливает data/ в HDFS
+    ├── run-simpleapp.{ps1,sh}     # Полный цикл для SimpleApp
+    ├── run-lab1-spark.sh          # spark-submit Lab 1 / часть 2
+    ├── run-lab2.sh                # hadoop jar Lab 2 SalesDriver
+    └── run-lab3-spark.sh          # spark-submit Lab 3
 ```
 
 ---

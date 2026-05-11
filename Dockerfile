@@ -1,17 +1,23 @@
 FROM eclipse-temurin:11-jre-jammy
 
 ARG HADOOP_VERSION=3.3.6
+ARG SPARK_VERSION=3.5.7
+ARG SPARK_SCALA_VERSION=2.13
 ENV HADOOP_VERSION=${HADOOP_VERSION} \
+    SPARK_VERSION=${SPARK_VERSION} \
+    SPARK_SCALA_VERSION=${SPARK_SCALA_VERSION} \
     HADOOP_HOME=/opt/hadoop \
     HADOOP_CONF_DIR=/opt/hadoop/etc/hadoop \
     HADOOP_LOG_DIR=/opt/hadoop/logs \
+    SPARK_HOME=/opt/spark \
+    SPARK_CONF_DIR=/opt/spark/conf \
     HDFS_NAMENODE_USER=root \
     HDFS_DATANODE_USER=root \
     HDFS_SECONDARYNAMENODE_USER=root \
     YARN_RESOURCEMANAGER_USER=root \
     YARN_NODEMANAGER_USER=root \
     HADOOP_DATA_DIR=/data/hdfs \
-    PATH=/opt/hadoop/bin:/opt/hadoop/sbin:$PATH
+    PATH=/opt/spark/bin:/opt/hadoop/bin:/opt/hadoop/sbin:$PATH
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -40,6 +46,31 @@ RUN set -eux; \
              "${HADOOP_DATA_DIR}/secondary" "${HADOOP_DATA_DIR}/tmp" \
              "${HADOOP_LOG_DIR}"
 
+# Download Spark (precompiled with Hadoop3+Scala 2.13).  We use the same
+# pattern as Hadoop above: active mirror first, archive as fallback.
+#
+# Spark is installed in /opt/spark so that `spark-submit --master yarn`
+# works from any cluster container — HADOOP_CONF_DIR points it at the
+# already-configured YARN/HDFS.
+RUN set -eux; \
+    SPARK_TGZ="spark-${SPARK_VERSION}-bin-hadoop3-scala${SPARK_SCALA_VERSION}.tgz"; \
+    for url in \
+        "https://dlcdn.apache.org/spark/spark-${SPARK_VERSION}/${SPARK_TGZ}" \
+        "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/${SPARK_TGZ}"; do \
+        if curl -fSL --retry 5 --retry-connrefused "$url" -o /tmp/spark.tgz; then \
+            break; \
+        fi; \
+    done; \
+    test -s /tmp/spark.tgz; \
+    tar -xzf /tmp/spark.tgz -C /opt; \
+    mv "/opt/spark-${SPARK_VERSION}-bin-hadoop3-scala${SPARK_SCALA_VERSION}" "${SPARK_HOME}"; \
+    rm /tmp/spark.tgz
+
+# Минимальные Spark-настройки: говорим Spark, что master = YARN, и где
+# лежат конфиги Hadoop.  Этого достаточно, чтобы spark-submit без флагов
+# отправлял job на YARN. Тонкости (память/ядра executors) можно
+# переопределять флагами командной строки.
+COPY config/spark-defaults.conf ${SPARK_CONF_DIR}/spark-defaults.conf
 COPY config/ ${HADOOP_CONF_DIR}/
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 
@@ -48,7 +79,9 @@ COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
         "${HADOOP_CONF_DIR}/hadoop-env.sh" \
         "${HADOOP_CONF_DIR}/workers" \
-    && chmod +x /usr/local/bin/entrypoint.sh
+        "${SPARK_CONF_DIR}/spark-defaults.conf" \
+    && chmod +x /usr/local/bin/entrypoint.sh \
+    && rm -f "${HADOOP_CONF_DIR}/spark-defaults.conf"
 
 # Информационно: NameNode RPC/UI, DataNode, SecondaryNameNode,
 # ResourceManager, NodeManager, HistoryServer, MR shuffle, AM port range.
