@@ -173,9 +173,11 @@ case "$ROLE" in
         ;;
 
     worker)
-        # Combined-режим только для docker-compose.local.yml: один
-        # контейнер с DN+NM, чтобы не было коллизий hostname'ов worker1/2
-        # на одной bridge-сети.
+        # Один контейнер на worker'а несёт DataNode + NodeManager.
+        # Уникальный NODE_NAME даёт разные hostname'ы worker1/worker2,
+        # чтобы они не сталкивались на одной bridge-сети (актуально
+        # для all-in-one-режима, когда несколько воркеров поднимаются
+        # на одной машине).
         : "${NODE_NAME:?NODE_NAME (worker1|worker2|...) обязателен для worker}"
         wait_for "${NAMENODE_HOST}" 9000
         DN_OFFSET="$(compute_dn_port_offset "${NODE_NAME}")"

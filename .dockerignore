@@ -7,4 +7,5 @@ README.md
 docs/
 *.md
 docker-compose*.yml
-app/
+generated/
+
