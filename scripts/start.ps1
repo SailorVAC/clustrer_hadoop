@@ -111,7 +111,7 @@ function Svc-SecondaryNamenode {
 }
 
 function Svc-ResourceManager {
-    param([bool]$WithBuild, [string[]]$Deps)
+    param([bool]$WithBuild, [string[]]$Deps, [string]$MasterIP)
     $lines = @()
     $lines += "  resourcemanager:"
     if ($WithBuild) { $lines += Build-Block }
@@ -121,12 +121,18 @@ function Svc-ResourceManager {
     if ($Deps.Count -gt 0) { $lines += Depends-Block -Deps $Deps }
     $lines += "    environment:"
     $lines += "      HADOOP_ROLE: resourcemanager"
+    # Spark-драйвер в client-mode читает SPARK_LOCAL_HOSTNAME и рекламирует
+    # этот адрес executors-ам. Без него driver выбирает bridge-IP контейнера
+    # (172.18.0.x), который недостижим с воркеров на других машинах.
+    $lines += "      SPARK_LOCAL_HOSTNAME: $MasterIP"
     $lines += "    ports:"
     $lines += '      - "8030:8030"'
     $lines += '      - "8031:8031"'
     $lines += '      - "8032:8032"'
     $lines += '      - "8033:8033"'
     $lines += '      - "8088:8088"'
+    $lines += '      - "4040:4040"'
+    $lines += '      - "32100-32107:32100-32107"'
     $lines += "    volumes:"
     $lines += "      - hadoop_logs:/opt/hadoop/logs"
     $lines += "    extra_hosts: *extra_hosts"
@@ -203,6 +209,7 @@ function Svc-NodeManager {
     $lines += '      - "13562:13562"'
     $lines += '      - "32000:32000"'
     $lines += '      - "32001:32001"'
+    $lines += '      - "32100-32107:32100-32107"'
     $lines += "    volumes:"
     $lines += "      - hadoop_logs:/opt/hadoop/logs"
     $lines += "    extra_hosts: *extra_hosts"
@@ -385,7 +392,7 @@ if ($roles -contains 2) {
 if ($roles -contains 3) {
     $deps = @()
     if ($roles -contains 1) { $deps += "namenode" }
-    $yaml += Svc-ResourceManager -WithBuild $needBuild -Deps $deps
+    $yaml += Svc-ResourceManager -WithBuild $needBuild -Deps $deps -MasterIP $rmMachine.IP
     $needBuild = $false
     $volumeList += "hadoop_logs"
 }

@@ -156,6 +156,12 @@ case "$ROLE" in
         ;;
 
     resourcemanager)
+        # /etc/hosts в multi-host сетапе содержит две строки для
+        # `resourcemanager`: bridge-IP от Docker и LAN-IP из extra_hosts.
+        # Сносим bridge-строку, чтобы Java/Spark видели ровно LAN-IP
+        # (иначе Spark-драйвер в client-mode рекламирует воркерам
+        # bridge-IP 172.18.0.x, который с других машин не достижим).
+        fix_hostname_for_lan
         exec yarn resourcemanager
         ;;
 
