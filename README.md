@@ -342,6 +342,15 @@ stop.bat
 start.bat
 ```
 
+### Spark: `Service 'org.apache.spark.network.netty.NettyBlockTransferService' failed` у executor-а
+
+Тоже про bind, но уже у executor-а — он биндит BlockManager на hostname `worker1`, который без bridge-IP в `/etc/hosts` резолвится только в LAN-IP, не привязанный к интерфейсу контейнера. Фикс — оставлять bridge-IP в `/etc/hosts` на воркерах (в `entrypoint.sh` `fix_hostname_for_lan` НЕ зовётся для datanode/nodemanager). Если ошибка появляется — образ собран до фикса:
+
+```powershell
+stop.bat
+start.bat
+```
+
 ### Spark: `No route to host` или `Initial job has not accepted any resources`
 
 Executors не достучались до драйвера: либо порты 32100–32107 не опубликованы (старый образ), либо закрыты файрволом. Проверь:
