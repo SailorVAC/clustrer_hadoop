@@ -67,8 +67,12 @@ Spark поставлен в тот же образ и через `spark-submit -
 
 | Машина              | Порты                                          |
 |---------------------|-------------------------------------------------|
-| **master**          | 9000, 9870, 9868, 8020, 8030, 8031, 8032, 8033, 8088, 19888 |
-| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001 |
+| **master**          | 9000, 9870, 9868, 8020, 8030, 8031, 8032, 8033, 8088, 19888, 4040, 32100–32107 |
+| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001, 32100–32107 |
+
+> Диапазон **32100–32107** нужен Spark-драйверу и BlockManager-у: в multi-host
+> сетапе executors на других машинах достучатся до них только через
+> опубликованные на LAN-IP порты. Порт **4040** — Spark UI в client-mode.
 
 > **Совет:** на время работы можно разрешить весь трафик от подсети ноутбуков:
 > Windows Defender → Advanced settings → Inbound rules → New rule → Custom → Remote IPs.
@@ -328,6 +332,32 @@ HDFS-клиент пытается достучаться по Docker bridge IP 
 1. Передавайте `-Ddfs.client.use.datanode.hostname=true` в свои `hadoop`/`spark` команды (значение по умолчанию в конфиге уже выставлено, но некоторые клиенты его перетирают).
 2. Пересоберите контейнеры на всех ноутах, чтобы подтянулись актуальные конфиги: `stop.bat` и `start.bat`.
 3. Убедитесь, что в `cluster.conf` корректные LAN IP, а порты воркеров (9866, 13562, 32000–32001) открыты в файрволе.
+
+### Spark: `Cannot assign requested address: Service 'sparkDriver' failed after 16 retries`
+
+Драйвер Spark пытается забиндиться на LAN-IP мастера/воркера, который физически не привязан ни к одному интерфейсу внутри контейнера. Эта проблема уже учтена в `config/spark-defaults.conf` (`spark.driver.bindAddress=0.0.0.0`). Если ошибка всё равно появляется — значит образ собран до этого фикса. Пересобери:
+
+```powershell
+stop.bat
+start.bat
+```
+
+### Spark: `Service 'org.apache.spark.network.netty.NettyBlockTransferService' failed` у executor-а
+
+Тоже про bind, но уже у executor-а — он биндит BlockManager на hostname `worker1`, который без bridge-IP в `/etc/hosts` резолвится только в LAN-IP, не привязанный к интерфейсу контейнера. Фикс — оставлять bridge-IP в `/etc/hosts` на воркерах (в `entrypoint.sh` `fix_hostname_for_lan` НЕ зовётся для datanode/nodemanager). Если ошибка появляется — образ собран до фикса:
+
+```powershell
+stop.bat
+start.bat
+```
+
+### Spark: `No route to host` или `Initial job has not accepted any resources`
+
+Executors не достучались до драйвера: либо порты 32100–32107 не опубликованы (старый образ), либо закрыты файрволом. Проверь:
+
+1. `docker port resourcemanager` — должен показывать `32100/tcp → 0.0.0.0:32100` и т.д.; то же на воркерах для `docker port nodemanager`.
+2. Порты 32100–32107 открыты в Windows Firewall на **всех** машинах.
+3. Если ничего не помогает — `stop.bat && start.bat` пересоберёт образ с актуальным `spark-defaults.conf`.
 
 ---
 
