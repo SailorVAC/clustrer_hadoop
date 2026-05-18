@@ -71,6 +71,7 @@ RUN set -eux; \
 # отправлял job на YARN. Тонкости (память/ядра executors) можно
 # переопределять флагами командной строки.
 COPY config/spark-defaults.conf ${SPARK_CONF_DIR}/spark-defaults.conf
+COPY config/spark-env.sh ${SPARK_CONF_DIR}/spark-env.sh
 COPY config/ ${HADOOP_CONF_DIR}/
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 
@@ -80,15 +81,19 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
         "${HADOOP_CONF_DIR}/hadoop-env.sh" \
         "${HADOOP_CONF_DIR}/workers" \
         "${SPARK_CONF_DIR}/spark-defaults.conf" \
-    && chmod +x /usr/local/bin/entrypoint.sh \
-    && rm -f "${HADOOP_CONF_DIR}/spark-defaults.conf"
+        "${SPARK_CONF_DIR}/spark-env.sh" \
+    && chmod +x /usr/local/bin/entrypoint.sh "${SPARK_CONF_DIR}/spark-env.sh" \
+    && rm -f "${HADOOP_CONF_DIR}/spark-defaults.conf" \
+           "${HADOOP_CONF_DIR}/spark-env.sh"
 
 # Информационно: NameNode RPC/UI, DataNode, SecondaryNameNode,
-# ResourceManager, NodeManager, HistoryServer, MR shuffle, AM port range.
+# ResourceManager, NodeManager, HistoryServer, MR shuffle, AM port range,
+# Spark driver UI + driver RPC + driver block-mgr + executor block-mgr.
 EXPOSE 9000 9870 9864 9866 9867 9868 \
        8030 8031 8032 8033 8088 \
        8040 8041 8042 13562 \
        19888 10020 \
-       32000-32100
+       32000-32100 \
+       4040 7077 7078 7079-7084
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]

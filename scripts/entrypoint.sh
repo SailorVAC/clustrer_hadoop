@@ -125,6 +125,31 @@ tree.write(cfg, encoding="UTF-8", xml_declaration=True)
 PY
 }
 
+# Создаёт в HDFS директории, которые нужны Spark'у при старте драйвера.
+# В spark-defaults.conf включён eventLog и указан hdfs:///spark-logs
+# — если директории нет, драйвер вылетает с FileNotFoundException
+# в EventLoggingListener (особенно видно в --deploy-mode cluster,
+# где это выводит AM exit code 13). Делаем это в фоне после
+# того, как NameNode принял подключения и вышел из safe-mode.
+bootstrap_hdfs_dirs() {
+    wait_for localhost 9000 300 || return 0
+    # Safe-mode выключается автоматически, когда все блоки отчитались.
+    local waited=0
+    while ! hdfs dfsadmin -safemode get 2>/dev/null | grep -q "is OFF"; do
+        sleep 2
+        waited=$((waited + 2))
+        if (( waited >= 180 )); then
+            echo "[entrypoint] bootstrap_hdfs_dirs: safe-mode не выключился за 180s, пропускаю" >&2
+            return 0
+        fi
+    done
+    if ! hdfs dfs -test -d /spark-logs 2>/dev/null; then
+        echo "[entrypoint] создаю /spark-logs в HDFS для Spark eventLog/history"
+        hdfs dfs -mkdir -p /spark-logs
+        hdfs dfs -chmod 1777 /spark-logs
+    fi
+}
+
 case "$ROLE" in
     namenode)
         if [[ ! -f "${HADOOP_DATA_DIR}/namenode/current/VERSION" ]]; then
@@ -132,6 +157,7 @@ case "$ROLE" in
             hdfs namenode -format -nonInteractive -force \
                 -clusterId "${HADOOP_CLUSTER_ID:-clustrer-hadoop}"
         fi
+        bootstrap_hdfs_dirs &
         exec hdfs namenode
         ;;
 

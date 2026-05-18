@@ -152,6 +152,13 @@ ${dep_block}    environment:
       - "8032:8032"
       - "8033:8033"
       - "8088:8088"
+      # Spark driver/UI in client-mode: spark-submit runs from this
+      # container, so the driver listens here and must be reachable from
+      # other LAN hosts. Must match the fixed ports in
+      # config/spark-defaults.conf.
+      - "4040:4040"
+      - "7077:7077"
+      - "7078:7078"
     volumes:
       - hadoop_logs:/opt/hadoop/logs
     extra_hosts: *extra_hosts
@@ -258,6 +265,16 @@ ${dep_block}    environment:
       - "13562:13562"
       - "32000:32000"
       - "32001:32001"
+      # Spark-порты на worker'е:
+      #   7077, 7078 — driver-RPC/block-manager. Нужны в --deploy-mode
+      #     cluster, когда AM=driver запускается в воркер-контейнере.
+      #   7079-7084 — executor block-manager (spark.blockManager.port +
+      #     port.maxRetries=5).
+      # Без публикации этих портов driver и executor'ы в multi-host
+      # Docker не достучатся друг до друга.
+      - "7077:7077"
+      - "7078:7078"
+      - "7079-7084:7079-7084"
     volumes:
       - hadoop_logs:/opt/hadoop/logs
     extra_hosts: *extra_hosts
