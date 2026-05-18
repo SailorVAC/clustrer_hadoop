@@ -69,11 +69,13 @@ Spark поставлен в тот же образ и через `spark-submit -
 | Машина              | Порты                                          |
 |---------------------|-------------------------------------------------|
 | **master**          | 9000, 9870, 9868, 8020, 8030, 8031, 8032, 8033, 8088, 19888, 4040, 7077, 7078 |
-| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001, 7079–7084 |
+| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001, 7077–7084 |
 
-> Порты 4040 / 7077 / 7078 (master) и 7079–7084 (worker) нужны только для
+> Порты 4040 / 7077 / 7078 (master) и 7077–7084 (worker) нужны только для
 > Spark — без них приложения на Spark зависают на `Initial job has not
-> accepted any resources`. См. [Spark-приложения зависают / TimeoutException](#spark-приложения-зависают--timeoutexception)
+> accepted any resources` или AM вываливается с exit 13. 7077/7078 на
+> worker'е используются только в `--deploy-mode cluster` (driver
+> живёт в AM-контейнере на воркере). См. [Spark-приложения зависают / TimeoutException](#spark-приложения-зависают--timeoutexception)
 > в разделе «Решение проблем».
 
 > **Совет:** на время работы можно разрешить весь трафик от подсети ноутбуков:
@@ -271,11 +273,10 @@ docker exec -it resourcemanager hadoop jar /tmp/app.jar /input /output
 
 ### Spark-задача
 
-> **Важно:** `spark-submit` нужно запускать **из контейнера
-> `resourcemanager`** — driver биндится на порты 7077/7078, которые
-> опубликованы именно у этого контейнера. Если запустить из `namenode`
-> или другого контейнера, executor'ы не смогут достучаться до driver'а
-> через LAN и приложение зависнет.
+`spark-submit` запускается из контейнера `resourcemanager`. Поддерживаются
+оба режима: `--deploy-mode client` (driver живёт в `resourcemanager`,
+вывод в консоль — удобно для лаб) и `--deploy-mode cluster` (driver
+уезжает в AM-контейнер на одном из воркеров).
 
 ```powershell
 # 1. Закинуть JAR в resourcemanager-контейнер.
@@ -285,16 +286,26 @@ docker cp app.jar resourcemanager:/tmp/app.jar
 docker exec namenode hdfs dfs -mkdir -p /input
 docker exec namenode hdfs dfs -put C:\path\to\input.txt /input/
 
-# 3. Submit (--master yarn и --deploy-mode client уже в spark-defaults.conf).
+# 3a. Client-mode (вывод driver'а виден в консоли).
+#     --master yarn уже в spark-defaults.conf, --deploy-mode по умолчанию client.
 docker exec -it resourcemanager spark-submit `
+    --class <MainClass> /tmp/app.jar /input /output
+
+# 3b. Cluster-mode (driver уезжает на воркер, логи через yarn logs).
+docker exec -it resourcemanager spark-submit `
+    --master yarn --deploy-mode cluster `
     --class <MainClass> /tmp/app.jar /input /output
 ```
 
-Логи приложения после завершения:
+Логи приложения после завершения (в cluster-mode это единственный
+способ увидеть вывод driver'а):
 
 ```powershell
 docker exec resourcemanager yarn logs -applicationId <application_id>
 ```
+
+Директория `/spark-logs` в HDFS (event-log Spark history) создаётся
+автоматически намнодой при первом выходе из safe-mode.
 
 ---
 
@@ -398,7 +409,8 @@ Spark выбирает СЛУЧАЙНЫЕ TCP-порты — в нашем multi
 
 | Контейнер          | Порты | Назначение |
 |--------------------|-------|------------|
-| `resourcemanager`  | 4040, 7077, 7078 | Spark UI / driver RPC / driver block-manager |
+| `resourcemanager`  | 4040, 7077, 7078 | Spark UI / driver RPC / driver block-manager (client-mode) |
+| `nodemanager` (worker1/2) | 7077, 7078 | Spark driver RPC/block-manager (только cluster-mode — AM=driver) |
 | `nodemanager` (worker1/2) | 7079–7084 | Spark executor block-manager (+5 на ретраи) |
 
 Если приложение всё равно зависает:
@@ -411,7 +423,7 @@ Spark выбирает СЛУЧАЙНЫЕ TCP-порты — в нашем multi
        --master yarn --deploy-mode client `
        --class <MainClass> /path/to/app.jar <args>
    ```
-2. Проверьте, что порты 4040/7077/7078 (master) и 7079–7084 (worker'ы)
+2. Проверьте, что порты 4040/7077/7078 (master) и 7077–7084 (worker'ы)
    разрешены в Windows Firewall и не заняты другими приложениями
    (`netstat -ano | findstr 7077`).
 3. Внутри контейнера убедитесь, что `SPARK_LOCAL_HOSTNAME` равен hostname'у

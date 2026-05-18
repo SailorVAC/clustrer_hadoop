@@ -210,11 +210,17 @@ function Svc-NodeManager {
     $lines += '      - "13562:13562"'
     $lines += '      - "32000:32000"'
     $lines += '      - "32001:32001"'
-    # Spark executor block-manager: каждый executor поднимает RPC-listener
-    # на 7079 (см. spark.blockManager.port).  Драйвер на мастере коннектится
-    # к ним через worker_lan_ip:7079 — поэтому Docker должен явно
-    # опубликовать порт наружу.  Диапазон совпадает с spark.port.maxRetries
-    # на случай, если несколько executor'ов сядут на один NodeManager.
+    # Spark-порты на worker'е:
+    #   7077, 7078 — driver-RPC/block-manager. Нужны в --deploy-mode
+    #     cluster, когда AM=driver запускается в воркер-контейнере,
+    #     и executor'ы из других воркеров к нему коннектятся.
+    #     В client-mode эти порты на воркере не используются — driver живёт
+    #     в resourcemanager-контейнере и биндится там.
+    #   7079-7084 — executor block-manager (spark.blockManager.port +
+    #     port.maxRetries=5 на случай нескольких executor'ов на
+    #     одном NodeManager).
+    $lines += '      - "7077:7077"'
+    $lines += '      - "7078:7078"'
     $lines += '      - "7079-7084:7079-7084"'
     $lines += "    volumes:"
     $lines += "      - hadoop_logs:/opt/hadoop/logs"
