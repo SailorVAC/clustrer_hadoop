@@ -18,8 +18,9 @@
 6. [Генератор конфигов (setup-cluster)](#генератор-конфигов-setup-cluster)
 7. [Локальный тест на одном ноуте](#локальный-тест-на-одном-ноуте)
 8. [Веб-интерфейсы](#веб-интерфейсы)
-9. [Структура проекта](#структура-проекта)
-10. [Решение проблем](#решение-проблем)
+9. [Запуск приложений (MapReduce / Spark)](#запуск-приложений-mapreduce--spark)
+10. [Структура проекта](#структура-проекта)
+11. [Решение проблем](#решение-проблем)
 
 ---
 
@@ -67,8 +68,13 @@ Spark поставлен в тот же образ и через `spark-submit -
 
 | Машина              | Порты                                          |
 |---------------------|-------------------------------------------------|
-| **master**          | 9000, 9870, 9868, 8020, 8030, 8031, 8032, 8033, 8088, 19888 |
-| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001 |
+| **master**          | 9000, 9870, 9868, 8020, 8030, 8031, 8032, 8033, 8088, 19888, 4040, 7077, 7078 |
+| **worker1/worker2** | 9864, 9866, 9867, 8040–8042, 13562, 32000–32001, 7079–7084 |
+
+> Порты 4040 / 7077 / 7078 (master) и 7079–7084 (worker) нужны только для
+> Spark — без них приложения на Spark зависают на `Initial job has not
+> accepted any resources`. См. [Spark-приложения зависают / TimeoutException](#spark-приложения-зависают--timeoutexception)
+> в разделе «Решение проблем».
 
 > **Совет:** на время работы можно разрешить весь трафик от подсети ноутбуков:
 > Windows Defender → Advanced settings → Inbound rules → New rule → Custom → Remote IPs.
@@ -237,8 +243,58 @@ stop.bat -v
 | `http://<MASTER_IP>:8088`  | **ResourceManager** — YARN, запущенные приложения, NodeManager'ы |
 | `http://<MASTER_IP>:19888` | **JobHistory** — история завершённых MapReduce-задач |
 | `http://<MASTER_IP>:9868`  | **SecondaryNameNode** |
+| `http://<MASTER_IP>:4040`  | **Spark driver UI** (доступен только когда крутится spark-submit) |
 | `http://<WORKER_IP>:9864`  | **DataNode** на воркере |
 | `http://<WORKER_IP>:8042`  | **NodeManager** на воркере |
+
+---
+
+## Запуск приложений (MapReduce / Spark)
+
+Все клиентские утилиты (`hadoop`, `yarn`, `hdfs`, `spark-submit`) уже лежат
+в каждом контейнере. JAR-файлы удобнее всего класть в HDFS или
+монтировать в контейнер, но для быстрой проверки достаточно `docker cp`.
+
+### MapReduce-задача
+
+```powershell
+# 1. Закинуть JAR в master-контейнер.
+docker cp app.jar resourcemanager:/tmp/app.jar
+
+# 2. Положить входные данные в HDFS (один раз).
+docker exec namenode hdfs dfs -mkdir -p /input
+docker exec namenode hdfs dfs -put C:\path\to\input.txt /input/
+
+# 3. Запустить.
+docker exec -it resourcemanager hadoop jar /tmp/app.jar /input /output
+```
+
+### Spark-задача
+
+> **Важно:** `spark-submit` нужно запускать **из контейнера
+> `resourcemanager`** — driver биндится на порты 7077/7078, которые
+> опубликованы именно у этого контейнера. Если запустить из `namenode`
+> или другого контейнера, executor'ы не смогут достучаться до driver'а
+> через LAN и приложение зависнет.
+
+```powershell
+# 1. Закинуть JAR в resourcemanager-контейнер.
+docker cp app.jar resourcemanager:/tmp/app.jar
+
+# 2. (если ещё нет) — данные в HDFS.
+docker exec namenode hdfs dfs -mkdir -p /input
+docker exec namenode hdfs dfs -put C:\path\to\input.txt /input/
+
+# 3. Submit (--master yarn и --deploy-mode client уже в spark-defaults.conf).
+docker exec -it resourcemanager spark-submit `
+    --class <MainClass> /tmp/app.jar /input /output
+```
+
+Логи приложения после завершения:
+
+```powershell
+docker exec resourcemanager yarn logs -applicationId <application_id>
+```
 
 ---
 
@@ -320,6 +376,49 @@ start.bat
 ```powershell
 docker exec namenode hdfs dfs -cat /path/to/file
 ```
+
+### Spark-приложения зависают / TimeoutException
+
+Если MR-приложения работают, а Spark зависает на
+
+```
+INFO YarnScheduler: Initial job has not accepted any resources;
+check your cluster UI to ensure that workers are registered and have
+sufficient resources
+```
+
+или валится по `org.apache.spark.rpc.RpcTimeoutException` — проблема почти
+всегда в сети. Spark, в отличие от MapReduce, держит постоянное
+двустороннее RPC между driver'ом (на мастере) и executor'ами (на воркерах),
+плюс отдельный block-manager канал для shuffle/broadcast. По умолчанию
+Spark выбирает СЛУЧАЙНЫЕ TCP-порты — в нашем multi-host Docker они не
+проброшены наружу контейнеров.
+
+В этом репозитории порты уже фиксированы и опубликованы:
+
+| Контейнер          | Порты | Назначение |
+|--------------------|-------|------------|
+| `resourcemanager`  | 4040, 7077, 7078 | Spark UI / driver RPC / driver block-manager |
+| `nodemanager` (worker1/2) | 7079–7084 | Spark executor block-manager (+5 на ретраи) |
+
+Если приложение всё равно зависает:
+
+1. **Запускайте `spark-submit` из контейнера `resourcemanager`** — driver
+   биндится на порты 7077/7078, которые опубликованы именно у этого
+   контейнера:
+   ```powershell
+   docker exec -it resourcemanager spark-submit `
+       --master yarn --deploy-mode client `
+       --class <MainClass> /path/to/app.jar <args>
+   ```
+2. Проверьте, что порты 4040/7077/7078 (master) и 7079–7084 (worker'ы)
+   разрешены в Windows Firewall и не заняты другими приложениями
+   (`netstat -ano | findstr 7077`).
+3. Внутри контейнера убедитесь, что `SPARK_LOCAL_HOSTNAME` равен hostname'у
+   контейнера: `docker exec resourcemanager bash -lc 'echo $SPARK_LOCAL_HOSTNAME'`
+   должен напечатать `resourcemanager` (а не пустую строку и не bridge-IP).
+4. Если меняли cluster.conf после запуска — `stop.bat -v` и `start.bat`,
+   чтобы пересобрался compose с новыми extra_hosts.
 
 ### Connection refused при обращении к DataNode (`172.18.0.1:9866` и т.п.)
 

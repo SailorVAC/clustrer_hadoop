@@ -127,6 +127,13 @@ function Svc-ResourceManager {
     $lines += '      - "8032:8032"'
     $lines += '      - "8033:8033"'
     $lines += '      - "8088:8088"'
+    # Spark driver/UI in client-mode: spark-submit is run from this
+    # container, so the driver listens on these ports and needs to be
+    # reachable from worker hosts on the LAN. Must match the fixed ports
+    # in config/spark-defaults.conf.
+    $lines += '      - "4040:4040"'
+    $lines += '      - "7077:7077"'
+    $lines += '      - "7078:7078"'
     $lines += "    volumes:"
     $lines += "      - hadoop_logs:/opt/hadoop/logs"
     $lines += "    extra_hosts: *extra_hosts"
@@ -203,6 +210,12 @@ function Svc-NodeManager {
     $lines += '      - "13562:13562"'
     $lines += '      - "32000:32000"'
     $lines += '      - "32001:32001"'
+    # Spark executor block-manager: каждый executor поднимает RPC-listener
+    # на 7079 (см. spark.blockManager.port).  Драйвер на мастере коннектится
+    # к ним через worker_lan_ip:7079 — поэтому Docker должен явно
+    # опубликовать порт наружу.  Диапазон совпадает с spark.port.maxRetries
+    # на случай, если несколько executor'ов сядут на один NodeManager.
+    $lines += '      - "7079-7084:7079-7084"'
     $lines += "    volumes:"
     $lines += "      - hadoop_logs:/opt/hadoop/logs"
     $lines += "    extra_hosts: *extra_hosts"

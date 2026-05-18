@@ -2,6 +2,7 @@
 .env
 cluster.conf
 docker-compose.generated.yml
+docker-compose.test.yml
 
 # Docker-логи/данные, если кто-то решит сделать bind-mount.
 logs/
