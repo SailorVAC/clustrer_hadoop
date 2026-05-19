@@ -252,6 +252,14 @@ $depBlock    environment:
       - "8041:8041"
       - "8042:8042"
       - "13562:13562"
+      # Spark driver + block-manager (см. config/spark-defaults.conf).
+      # В YARN cluster mode driver живёт в AM-контейнере на NodeManager,
+      # поэтому фиксированные порты должны быть проброшены наружу: иначе
+      # executor'ы с других нод не достучатся до spark://...@workerN:7077
+      # и драйвер не дотянется до BlockManager executor'а на 7079.
+      - "7077:7077"
+      - "7078:7078"
+      - "7079:7079"
       - "32000:32000"
       - "32001:32001"
     volumes:

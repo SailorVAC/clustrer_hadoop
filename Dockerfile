@@ -84,11 +84,13 @@ RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
     && rm -f "${HADOOP_CONF_DIR}/spark-defaults.conf"
 
 # Информационно: NameNode RPC/UI, DataNode, SecondaryNameNode,
-# ResourceManager, NodeManager, HistoryServer, MR shuffle, AM port range.
+# ResourceManager, NodeManager, HistoryServer, MR shuffle, AM port range,
+# Spark driver/block-manager (7077/7078/7079).
 EXPOSE 9000 9870 9864 9866 9867 9868 \
        8030 8031 8032 8033 8088 \
        8040 8041 8042 13562 \
        19888 10020 \
+       7077 7078 7079 \
        32000-32100
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
