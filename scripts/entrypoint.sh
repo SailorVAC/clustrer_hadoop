@@ -83,28 +83,40 @@ fix_hostname_for_lan() {
 # fails with "Cannot assign requested address" (EADDRNOTAVAIL). Other hosts
 # still resolve <NODE_NAME> to the LAN IP through their own extra_hosts, so
 # cross-host RPC is unaffected.
+#
+# NOTE: must be safe under `set -euo pipefail`. We use only tools guaranteed
+# to exist in the base image (`hostname`, `awk`, `getent`, `grep`, `cat`,
+# `mktemp`) and guard every pipeline with `|| true` so a transient failure
+# never crashes the entrypoint — the worst case is we log a warning and
+# leave /etc/hosts as-is.
 ensure_local_hostname_bindable() {
-    local hn
+    local hn bridge_ip first_ip tmpf
     hn="$(hostname)"
-    local bridge_ip
-    bridge_ip=$(ip -4 addr show scope global 2>/dev/null \
-                 | awk '/inet / {print $2; exit}' | cut -d/ -f1)
+    # `hostname -I` (from the `hostname` package on jammy) prints all
+    # non-loopback IPv4/IPv6 addresses assigned to the container, separated
+    # by spaces. The first one is the docker bridge IP. `iproute2` (`ip`)
+    # is NOT in the base image, so we rely on this.
+    bridge_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
     if [[ -z "$bridge_ip" ]]; then
-        bridge_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        # Fallback: pick the first IPv4 address out of `getent ahosts <hn>`
+        # that is NOT one of the addresses Docker put in via extra_hosts.
+        # Even this is best-effort; if it fails we just bail.
+        bridge_ip="$(getent ahosts "${hn}" 2>/dev/null \
+                     | awk '/STREAM/ {print $1}' \
+                     | grep -v '^192\.\|^10\.\|^127\.' \
+                     | head -n1 || true)"
     fi
     if [[ -z "$bridge_ip" ]]; then
         echo "[entrypoint] WARN: не удалось определить bridge IP для ${hn};" \
              "Spark executor может упасть с BindException: Cannot assign requested address" >&2
-        return
+        return 0
     fi
     # If the bridge IP is already what ${hn} resolves to first, nothing to do.
-    local first_ip
-    first_ip=$(getent hosts "${hn}" 2>/dev/null | awk 'NR==1 {print $1}')
+    first_ip="$(getent hosts "${hn}" 2>/dev/null | awk 'NR==1 {print $1}' || true)"
     if [[ "$first_ip" == "$bridge_ip" ]]; then
-        return
+        return 0
     fi
-    local tmpf
-    tmpf=$(mktemp)
+    tmpf="$(mktemp)"
     {
         printf '%s\t%s\n' "$bridge_ip" "$hn"
         cat /etc/hosts
